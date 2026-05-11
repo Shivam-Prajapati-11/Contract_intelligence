@@ -1,11 +1,9 @@
 import io
 import logging
 from zipfile import ZipFile
-
 import numpy as np
 from docx import Document
 from PIL import Image
-
 from core.ocr_engine import ocr_image
 
 logger = logging.getLogger(__name__)
@@ -14,7 +12,7 @@ _SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".gif
 
 
 def _extract_embedded_images(file_path: str) -> list[np.ndarray]:
-    """Opens the DOCX as a ZIP and returns all embedded images from word/media/ as numpy arrays."""
+    """Extracts images from DOCX ZIP archive."""
     images: list[np.ndarray] = []
     try:
         with ZipFile(file_path, "r") as zf:
@@ -28,18 +26,14 @@ def _extract_embedded_images(file_path: str) -> list[np.ndarray]:
                     img = Image.open(io.BytesIO(zf.read(path))).convert("RGB")
                     images.append(np.array(img))
                 except Exception as exc:
-                    logger.warning("DOCX: skipping embedded image '%s' — %s.", path, exc)
+                    logger.warning("DOCX: skipping image '%s' — %s", path, exc)
     except Exception as exc:
-        logger.warning("DOCX: failed to read archive for images — %s.", exc)
+        logger.warning("DOCX: image extraction failed — %s", exc)
     return images
 
 
 def extract_from_docx(file_path: str) -> str:
-    """
-    Extracts text from a DOCX file using a hybrid approach:
-      1. Native paragraph text via python-docx (fast, no OCR needed).
-      2. Embedded images via PaddleOCR (GPU + auto language detection).
-    """
+    """Hybrid DOCX extraction: native text + OCR on images."""
     doc = Document(file_path)
     native_text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
@@ -47,13 +41,13 @@ def extract_from_docx(file_path: str) -> str:
     image_texts: list[str] = []
 
     if embedded_images:
-        logger.info("DOCX '%s': found %d embedded image(s) — running OCR.", file_path, len(embedded_images))
+        logger.info("DOCX '%s': OCR-ing %d images", file_path, len(embedded_images))
         for idx, img_array in enumerate(embedded_images):
             try:
                 text = ocr_image(img_array, hint_lang=None)
                 if text.strip():
                     image_texts.append(text)
             except Exception as exc:
-                logger.warning("DOCX: OCR failed on image %d — %s.", idx + 1, exc)
+                logger.warning("DOCX: image %d OCR failed — %s", idx + 1, exc)
 
     return "\n".join(p for p in [native_text] + image_texts if p.strip())

@@ -14,7 +14,7 @@ After migrating from Tesseract OCR to PaddleOCR with hybrid native text extracti
 |---|---|---|
 | Digital PDF processing | 60–120 seconds | **0.28–0.35 seconds** |
 | Scanned PDF processing | 60–120 seconds | GPU-accelerated (seconds) |
-| VRAM spike during processing | 14–15 GB | **< 1 GB** (no spike for digital PDFs) |
+| VRAM spike | 0 GB (CPU only) | **< 1 GB** for digital PDFs |
 | Multi-language support | Manual config | Auto-detected |
 | DOCX embedded images | Not extracted | PaddleOCR via embedded image OCR |
 
