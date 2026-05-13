@@ -9,21 +9,20 @@ dependencies = [
     "fastapi[standard]>=0.136.1",
     "gevent>=26.4.0",
     "ipykernel>=7.2.0",
-    "setuptools",                  # required by paddlepaddle's cpp_extension at runtime
-    "paddlepaddle-gpu>=2.6.0",    # GPU build — requires CUDA 11.x or 12.x + cuDNN installed
-    "paddleocr>=2.8.0",           # OCR models (downloaded on first use, then cached)
-    "pymupdf>=1.24.0",            # PDF → image rendering (replaces pdf2image + Poppler)
-    "numpy>=1.24.0",              # image array conversion for PaddleOCR
-    "langdetect>=1.0.9",          # automatic document language detection
+    "setuptools",
+    "paddlepaddle-gpu>=2.6.0",
+    "paddleocr>=2.8.0",
+    "pymupdf>=1.24.0",
+    "numpy>=1.24.0",
+    "langdetect>=1.0.9",
     "pillow>=12.2.0",
     "python-docx>=1.2.0",
     "python-multipart>=0.0.27",
     "redis>=7.4.0",
+    "transformers>=5.8.0",
 ]
 
-# ── Setuptools: only include real Python packages ──────────────────────────
-# Without this, setuptools auto-discovers data/, CUAD_v1/, poppler/ etc.
-# in the flat layout and refuses to build.
+
 [tool.setuptools.packages.find]
 include = [
     "api*",
