@@ -6,7 +6,6 @@ from typing import List, cast
 from celery import group, Task
 
 from ingestion.file_manager import save_file
-from tasks.pipeline_tasks import process_single_file
 from core.redis_client import redis_client
 from core.config import settings
 
@@ -72,6 +71,9 @@ async def upload_files(files: List[UploadFile] = File(...)):
         }
     )
 
+    # Lazy import: prevents PaddleOCR/torch from loading in the FastAPI process at startup.
+    # The Celery task is only dispatched here (not executed), so this import is safe.
+    from tasks.pipeline_tasks import process_single_file
     task = cast(Task, process_single_file)
 
     task_group = group(

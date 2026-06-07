@@ -2,6 +2,7 @@ import os
 import logging
 import fitz
 import numpy as np
+from core.config import settings
 from core.ocr_engine import ocr_image, _detect_language
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ def extract_from_pdf(file_path: str) -> str:
         else:
             logger.info("Page %d has < 50 chars of native text. Falling back to PaddleOCR.", i + 1)
             
-            pix = page.get_pixmap(dpi=300, alpha=False, colorspace=fitz.csRGB)
+            pix = page.get_pixmap(dpi=settings.ocr_dpi, alpha=False, colorspace=fitz.csRGB)
             
             img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, 3)
                 
@@ -40,6 +41,10 @@ def extract_from_pdf(file_path: str) -> str:
                 cached_lang = _detect_language(page_text)
                 if cached_lang != "en":
                     logger.debug("Cached language '%s' from OCR text on page %d", cached_lang, i + 1)
+            
+            # Force immediate cleanup of heavy image data
+            pix = None
+            img_array = None
                 
     doc.close()
     return "\n".join(part for part in text_parts if part)

@@ -17,3 +17,8 @@ poppler/
 data/
 CUAD_v1/
 models/fine_tuned_legal_roberta
+
+# Scratch files, job ID, and diagnostics
+scratch_*
+job_id.txt
+diag_torch_kill.py

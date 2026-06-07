@@ -1,3 +1,12 @@
+import os, sys
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"   # Hide GPU from PyTorch so Ollama owns VRAM exclusively
+os.environ["TRANSFORMERS_OFFLINE"] = "1"    # Load ST model from cache — skip HF Hub 30s network checks
+os.environ["HF_DATASETS_OFFLINE"] = "1"     # Same — prevent huggingface_hub background polling
+# Ensure the project root is in sys.path so all local packages are importable
+# regardless of how the worker/server is launched (uv run, direct python, etc.)
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 from celery import Celery
 
 celery_app = Celery(

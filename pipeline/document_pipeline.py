@@ -14,8 +14,10 @@ def get_embedding_model():
     if _embedding_model is None:
         try:
             from sentence_transformers import SentenceTransformer
-            logger.info("Initializing SentenceTransformer lazily...")
-            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+            from core.config import settings
+            logger.info(f"Initializing SentenceTransformer lazily on device={settings.embedding_device}...")
+            device = settings.embedding_device if settings.embedding_device != "auto" else None
+            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
         except Exception as e:
             logger.error(f"Error loading embedding model: {e}")
     return _embedding_model

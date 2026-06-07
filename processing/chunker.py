@@ -1,6 +1,8 @@
 import re
 import logging
 
+from core.config import settings
+
 logger = logging.getLogger(__name__)
 
 SECTION_PATTERNS = [
@@ -91,7 +93,7 @@ def _sub_chunk(text: str, max_chars: int = 800, overlap: int = 100) -> list[str]
     return chunks
 
 
-def chunk_text(text: str, max_chars: int = 800, overlap: int = 100) -> list[dict]:
+def chunk_text(text: str, max_chars: int | None = None, overlap: int | None = None) -> list[dict]:
     """
     Section-aware chunking for legal contracts.
     
@@ -103,7 +105,12 @@ def chunk_text(text: str, max_chars: int = 800, overlap: int = 100) -> list[dict
     """
     if not text or not text.strip():
         return []
-    
+
+    if max_chars is None:
+        max_chars = settings.chunk_max_chars
+    if overlap is None:
+        overlap = settings.chunk_overlap
+
     sections = _detect_sections(text)
     logger.info(f"Detected {len(sections)} sections in document")
     

@@ -1,7 +1,10 @@
 import os
+import re
 import logging
+import asyncio
 from fastapi import APIRouter
-from core.vector_db import search_chunks, get_chunks_by_order, get_all_chunks
+from core.config import settings
+from core.vector_db import search_chunks, get_chunks_by_order, get_all_chunks, keyword_search_chunks
 from models.qa_pipeline import answer_question
 
 logger = logging.getLogger(__name__)
@@ -38,8 +41,8 @@ CUAD_QUESTIONS = {
     "Intellectual Property Ownership": "Who owns the intellectual property created under this agreement?",
 }
 
-HIGH_CONFIDENCE = 6.0
-LOW_CONFIDENCE = 3.0
+HIGH_CONFIDENCE = settings.confidence_high
+LOW_CONFIDENCE = settings.confidence_low
 
 CRITICAL_CATEGORIES = {
     "Limitation of Liability": ("HIGH", "Missing Limitation of Liability clause", 5),
@@ -52,25 +55,82 @@ CRITICAL_CATEGORIES = {
 PREAMBLE_CATEGORIES = {"Parties", "Effective Date", "Document Name", "Expiration Date"}
 
 SECTION_KEYWORDS = {
-    "Termination for Convenience": ["termination", "terminate", "convenience"],
-    "Termination for Cause": ["termination", "terminate", "cause", "breach", "default"],
-    "Governing Law": ["governing law", "jurisdiction", "applicable law"],
-    "Limitation of Liability": ["liability", "limitation", "damages", "indemnif"],
-    "Indemnification": ["indemnif", "hold harmless", "defend"],
-    "Confidentiality": ["confidential", "non-disclosure", "nda", "proprietary"],
-    "Non-Compete": ["non-compete", "noncompete", "compete", "competition", "restrictive"],
-    "Non-Solicitation": ["non-solicitation", "nonsolicitation", "solicit"],
-    "Assignment": ["assign", "transfer", "delegate"],
-    "Renewal Term": ["renewal", "renew", "auto-renew", "extend"],
-    "Payment Terms": ["payment", "fee", "compensation", "commission", "price"],
-    "Intellectual Property Ownership": ["intellectual property", "ip", "patent", "copyright", "trademark", "ownership"],
+    "Termination for Convenience": ["termination", "terminate", "convenience", "without cause"],
+    "Termination for Cause": ["termination", "terminate", "cause", "breach", "default", "cure"],
+    "Governing Law": ["governing law", "jurisdiction", "applicable law", "venue", "forum"],
+    "Limitation of Liability": ["liability", "limitation", "damages", "indemnif", "cap", "aggregate"],
+    "Indemnification": ["indemnif", "hold harmless", "defend", "losses", "third party claim"],
+    "Confidentiality": ["confidential", "non-disclosure", "nda", "proprietary", "trade secret"],
+    "Non-Compete": ["non-compete", "noncompete", "compete", "competition", "restrictive", "covenant not to compete"],
+    "Non-Solicitation": ["non-solicitation", "nonsolicitation", "solicit", "recruit", "hire"],
+    "Assignment": ["assign", "transfer", "delegate", "change of control", "successor"],
+    "Renewal Term": ["renewal", "renew", "auto-renew", "extend", "evergreen", "successive"],
+    "Payment Terms": ["payment", "fee", "compensation", "commission", "price", "royalt", "milestone"],
+    "Intellectual Property Ownership": ["intellectual property", "ip", "patent", "copyright", "trademark", "ownership", "work product", "work for hire"],
+    "Expiration Date": ["term", "expir", "end date", "initial term", "standstill", "period"],
+}
+
+RISK_PATTERNS = {
+    "Termination for Convenience": [
+        ("immediately", "HIGH", "Allows immediate termination without notice period", 5),
+        ("without notice", "HIGH", "No notice period required for termination", 5),
+        ("sole discretion", "MEDIUM", "Termination at sole discretion of one party", 3),
+        ("for any reason", "MEDIUM", "Broad termination right for any reason", 3),
+        ("no cure period", "HIGH", "No opportunity to cure before termination", 4),
+    ],
+    "Termination for Cause": [
+        ("immediately", "HIGH", "Allows immediate termination without notice period", 5),
+        ("without notice", "HIGH", "No notice period required for termination", 5),
+        ("sole discretion", "MEDIUM", "Termination at sole discretion of one party", 3),
+    ],
+    "Limitation of Liability": [
+        ("unlimited", "HIGH", "No cap on liability exposure", 5),
+        ("no limit", "HIGH", "No cap on liability exposure", 5),
+        ("consequential damages", "MEDIUM", "Consequential damages clause present — review scope", 2),
+        ("exclusive remedy", "HIGH", "Limited to a single exclusive remedy", 4),
+        ("in no event", "LOW", "Liability limitation clause present", 0),
+    ],
+    "Indemnification": [
+        ("sole expense", "MEDIUM", "Potentially one-sided indemnification cost", 3),
+        ("unlimited indemnification", "HIGH", "No cap on indemnification exposure", 5),
+        ("broad indemnity", "MEDIUM", "Broadly scoped indemnification obligation", 3),
+        ("exclusive", "MEDIUM", "Exclusive indemnification may limit remedies", 2),
+    ],
+    "Non-Compete": [
+        ("worldwide", "HIGH", "Global geographic restriction on competition", 4),
+        ("perpetual", "HIGH", "No time limit on non-compete restriction", 5),
+        ("indefinite", "HIGH", "Unreasonable indefinite duration", 5),
+        ("any business", "HIGH", "Overly broad scope of restricted activities", 4),
+    ],
+    "Confidentiality": [
+        ("perpetual", "MEDIUM", "Indefinite confidentiality obligation", 3),
+        ("survive termination indefinitely", "MEDIUM", "Obligation survives without time limit", 3),
+        ("no exceptions", "MEDIUM", "No carve-outs for standard exceptions", 2),
+    ],
+    "Assignment": [
+        ("without consent", "MEDIUM", "Assignment allowed without other party's approval", 3),
+        ("freely assignable", "MEDIUM", "No restrictions on assignment", 3),
+    ],
+    "Renewal Term": [
+        ("auto-renew", "MEDIUM", "Automatic renewal — watch for opt-out deadlines", 2),
+        ("evergreen", "MEDIUM", "Evergreen clause with automatic renewal", 2),
+        ("without notice", "HIGH", "Auto-renews without notification", 4),
+    ],
+    "Payment Terms": [
+        ("net 90", "MEDIUM", "Extended payment terms (90+ days)", 2),
+        ("net 120", "HIGH", "Very long payment terms (120+ days)", 3),
+        ("sole satisfaction", "HIGH", "Payment contingent on sole satisfaction", 4),
+        ("non-refundable", "MEDIUM", "Non-refundable fees or deposits", 2),
+    ],
+    "Non-Solicitation": [
+        ("perpetual", "HIGH", "Indefinite non-solicitation restriction", 4),
+        ("worldwide", "HIGH", "Global scope non-solicitation", 4),
+    ],
 }
 
 
 def _extract_document_name_from_filename(filename: str) -> str | None:
     """Derive a cleaner document title from a noisy SEC-style filename."""
-    import re
-
     if not filename:
         return None
 
@@ -92,54 +152,33 @@ def _extract_document_name_from_filename(filename: str) -> str | None:
 
 
 def _assess_risk(category: str, answer: str, score: float) -> tuple:
-    """Assess risk based on category, answer content, and confidence score."""
+    """Assess risk using expanded pattern matching across all categories."""
     risk_level = "LOW"
     risk_flag = None
     risk_points = 0
-    
-    # Missing critical clauses
+
     if category in CRITICAL_CATEGORIES and (not answer or score < LOW_CONFIDENCE):
         level, flag, points = CRITICAL_CATEGORIES[category]
         return level, flag, points
-    
-    # Dangerous phrasing detection
-    if answer:
+
+    if answer and category in RISK_PATTERNS:
         text = answer.lower()
-        
-        if category in ("Termination for Convenience", "Termination for Cause"):
-            if "without notice" in text or "immediately" in text:
-                return "HIGH", "Allows immediate termination without notice period", 5
-            if "sole discretion" in text:
-                return "MEDIUM", "Termination at sole discretion of one party", 3
-        
-        if category == "Limitation of Liability":
-            if "unlimited" in text or "no limit" in text:
-                return "HIGH", "No cap on liability exposure", 5
-        
-        if category == "Non-Compete":
-            if "worldwide" in text or "perpetual" in text or "indefinite" in text:
-                return "HIGH", "Overly broad non-compete restrictions", 4
-        
-        if category == "Indemnification":
-            if "sole" in text and "expense" in text:
-                return "MEDIUM", "Potentially one-sided indemnification", 3
-    
-    # Low confidence flag
+        for pattern, level, flag, points in RISK_PATTERNS[category]:
+            if pattern.lower() in text:
+                return level, flag, points
+
     if answer and score < LOW_CONFIDENCE:
         return "MEDIUM", "Low confidence — needs human review", 1
-    
+
     return risk_level, risk_flag, risk_points
 
 
 def _get_document_metadata(job_id: str) -> dict:
     """Extract metadata about the uploaded document from Redis."""
     from core.redis_client import redis_client
-    
-    metadata = {
-        "filename": None,
-        "total_files": None,
-    }
-    
+
+    metadata = {"filename": None, "total_files": None}
+
     try:
         job_data = redis_client.hgetall(f"job:{job_id}")
         if job_data:
@@ -149,199 +188,400 @@ def _get_document_metadata(job_id: str) -> dict:
             metadata["total_files"] = int(total) if total else None
     except Exception as e:
         logger.warning(f"Could not retrieve document metadata: {e}")
-    
+
     return metadata
+
 
 def _get_best_chunks(job_id: str, category: str, question: str) -> list:
     """
-    Get the best chunks for a given question category.
-    Uses semantic search + section-aware boosting + preamble retrieval.
+    Hybrid retrieval: semantic search + keyword search + preamble retrieval.
+    Merges and deduplicates results for maximum recall.
     """
-    # Semantic search for this question
-    chunks = search_chunks(job_id=job_id, query=question, top_k=10)
-    
-    # For preamble categories, aggressively gather context
+    chunks = search_chunks(job_id=job_id, query=question)
+
+    # Keyword search for this category's known terms
+    if category in SECTION_KEYWORDS:
+        keywords = SECTION_KEYWORDS[category]
+        kw_chunks = keyword_search_chunks(job_id=job_id, keywords=keywords, limit=10)
+        existing_texts = {c["text"] for c in chunks}
+        for c in kw_chunks:
+            if c["text"] not in existing_texts:
+                chunks.append(c)
+                existing_texts.add(c["text"])
+
+    # Preamble retrieval for identity categories
     if category in PREAMBLE_CATEGORIES:
-        # Get the first 10 chunks of the document (preamble is always at the top)
-        early_chunks = get_chunks_by_order(job_id, limit=10)
+        preamble_limit = settings.preamble_chunks
+        early_chunks = get_chunks_by_order(job_id, limit=preamble_limit)
         existing_texts = {c["text"] for c in chunks}
         for c in early_chunks:
             if c["text"] not in existing_texts:
-                chunks.insert(0, c)  # Put preamble first
-        
-        # Additional semantic searches with preamble-specific queries
+                chunks.insert(0, c)
+
         alt_queries = {
             "Parties": [
                 "This agreement is entered into by and between",
                 "The parties to this agreement",
+                "WHEREAS",
             ],
             "Effective Date": [
                 "This agreement is made and entered into as of",
                 "effective as of the date",
+                "dated as of",
             ],
             "Document Name": [
                 "This agreement titled",
                 "agreement contract exhibit",
             ],
+            "Expiration Date": [
+                "initial term of this agreement",
+                "term shall expire",
+                "standstill period",
+            ],
         }
-        
+
+        existing_texts = {c["text"] for c in chunks}
         for alt_q in alt_queries.get(category, []):
             alt_chunks = search_chunks(job_id=job_id, query=alt_q, top_k=5)
             for c in alt_chunks:
                 if c["text"] not in existing_texts:
                     chunks.append(c)
                     existing_texts.add(c["text"])
-    
-    # Boost chunks from sections that match the category keywords
+
+    # Boost chunks from sections matching category keywords
     if category in SECTION_KEYWORDS:
         keywords = SECTION_KEYWORDS[category]
-        
+
         def section_relevance(chunk):
             title = chunk.get("section_title", "").lower()
+            text_start = chunk.get("text", "")[:200].lower()
             for kw in keywords:
-                if kw in title:
-                    return 0  # Highest priority
-            return 1  # Normal priority
-        
+                if kw in title or kw in text_start:
+                    return 0
+            return 1
+
         chunks.sort(key=section_relevance)
-    
+
     return chunks
 
 
-@router.get("/analyze/{job_id}")
-def analyze_contract(job_id: str):
+def _extract_parties(answer, score, chunks, job_id, question):
     """
-    Runs the full RAG + LLM pipeline for a given document.
+    Comprehensive multi-step party extraction:
+    1. Regex entity scan across ALL document text
+    2. Ask LLM to select actual signatories from entity list
+    3. Follow-up for missing second party
+    """
+    needs_improvement = (not answer or " and " not in answer)
+
+    if not needs_improvement:
+        return answer, score
+
+    all_chunks = get_all_chunks(job_id)
+    full_text = " ".join(c["text"] for c in all_chunks)
+
+    entity_pattern = r'([A-Z][A-Za-z\s&,\.\'-]+(?:Inc\.|Corp\.|LLC|L\.P\.|Ltd\.|L\.L\.C\.|Co\.|N\.A\.|Limited|Corporation|Company))'
+    entities = re.findall(entity_pattern, full_text)
+
+    seen = set()
+    unique_entities = []
+    for e in entities:
+        cleaned = e.strip().rstrip(',').strip()
+        normalized = cleaned.lower()
+        if normalized not in seen and len(cleaned) > 5:
+            seen.add(normalized)
+            unique_entities.append(cleaned)
+
+    if len(unique_entities) >= 2:
+        entity_list = ", ".join(unique_entities[:10])
+        party_q = (
+            f"From this list of entities found in the contract, "
+            f"which ones are the actual PARTIES (signatories) to this agreement? "
+            f"List only the party names separated by ' and '.\n\n"
+            f"Entities found: {entity_list}\n\n"
+            f"Contract context: {full_text[:3000]}"
+        )
+        # FIX: Pass actual chunks, not empty list
+        party_data = answer_question(query=party_q, chunks=all_chunks[:10], category="Parties")
+        party_answer = party_data.get("answer")
+        if party_answer and len(party_answer) > 5:
+            answer = party_answer
+            score = 8.0
+    elif len(unique_entities) == 1 and not answer:
+        answer = unique_entities[0]
+        score = 6.0
+
+    # If still only one party, try to find the second
+    if answer and " and " not in answer and unique_entities:
+        other_entities = [
+            e for e in unique_entities
+            if e.lower() not in answer.lower() and answer.lower() not in e.lower()
+        ]
+        if other_entities:
+            followup_q = (
+                f"This contract involves {answer}. "
+                f"The other entity mentioned is '{other_entities[0]}'. "
+                f"Is '{other_entities[0]}' the other party to this agreement? "
+                f"Answer with just the full legal name, or NOT_FOUND."
+            )
+            followup_data = answer_question(query=followup_q, chunks=chunks[:5], category="Parties")
+            other_party = followup_data.get("answer")
+            if other_party and other_party.lower() != answer.lower():
+                answer = f"{answer} and {other_party}"
+                score = 8.0
+
+    return answer, score
+
+
+GROUPS = {
+    "Group 1 (Identifiers)": [
+        "Document Name", "Parties", "Effective Date", "Expiration Date"
+    ],
+    "Group 2 (Key Terms)": [
+        "Governing Law", "Assignment", "Renewal Term"
+    ],
+    "Group 3 (Financials)": [
+        "Payment Terms", "Limitation of Liability", "Indemnification"
+    ],
+    "Group 4 (Covenants)": [
+        "Non-Compete", "Confidentiality", "Non-Solicitation"
+    ],
+    "Group 5 (Ops & IP)": [
+        "Termination for Convenience", "Termination for Cause", 
+        "Intellectual Property Ownership"
+    ]
+}
+
+
+def _get_best_chunks_focused_optimized(job_id: str, category: str, question: str) -> list:
+    """
+    Optimized hybrid retrieval for speed and precision.
+    Retrieves a higher limit of chunks since we are querying categories individually.
+    """
+    # Get top 5 semantic chunks
+    chunks = search_chunks(job_id=job_id, query=question, top_k=5)
+    
+    # Get top 3 keyword chunks
+    if category in SECTION_KEYWORDS:
+        keywords = SECTION_KEYWORDS[category]
+        kw_chunks = keyword_search_chunks(job_id=job_id, keywords=keywords, limit=3)
+        existing_texts = {c["text"] for c in chunks}
+        for c in kw_chunks:
+            if c["text"] not in existing_texts:
+                chunks.append(c)
+                existing_texts.add(c["text"])
+                
+    # Add preamble chunks for identity categories
+    if category in PREAMBLE_CATEGORIES:
+        early_chunks = get_chunks_by_order(job_id, limit=8)
+        existing_texts = {c["text"] for c in chunks}
+        for c in early_chunks:
+            if c["text"] not in existing_texts:
+                chunks.insert(0, c)
+                
+    return chunks
+
+
+def _query_ollama_individual(question: str, context: str, category: str, max_retries: int = 3, retry_delay: float = 5.0) -> str:
+    """Call Ollama with retry logic for a single category to ensure robust model responses."""
+    import requests
+    import time
+    from models.qa_pipeline import CATEGORY_HINTS
+
+    SYSTEM_PROMPT_INDIVIDUAL = "You are a precise legal contract analyst. Extract the exact relevant clauses from the contract text."
+
+    hint = CATEGORY_HINTS.get(category, "")
+    hint_block = f"\nEXTRACTION HINTS: {hint}\n" if hint else ""
+
+    extra_guidelines = ""
+    if category == "Termination for Convenience":
+        extra_guidelines = (
+            "\n5. If a party has a right to terminate the contract upon notice or under certain conditions (even if "
+            "heavily redacted with [**], like eBix terminating under Section 13.1), you MUST extract this as the "
+            "Termination for Convenience clause. Do not return NOT_FOUND if such a termination clause is present."
+        )
+
+    prompt = f"""You are a professional legal contract analyst. Extract the answer to the question below from the contract text.
+If the information is genuinely not present in the text, respond with exactly: NOT_FOUND.
+{hint_block}
+Think step by step: first identify the relevant clauses or sections, then extract the specific answer.
+
+IMPORTANT GUIDELINES:
+1. Provide a direct quote or the exact text from the contract. Do not summarize unless necessary.
+2. If a clause is present but contains redacted placeholders (like [**]), you must still extract the clause.
+3. If a clause uses different terminology (e.g. 'assign' or 'transfer' for assignment, 'exclusivity' or 'proprietary' or 'ownership of data' for IP ownership, 'terminate... without cause' or 'terminate... upon notice' for termination for convenience), you must still extract it.{extra_guidelines}
+4. Do not return NOT_FOUND if there is a clause that addresses the general topic of the question.
+
+QUESTION: {question}
+
+CONTRACT TEXT:
+{context}
+
+ANSWER:"""
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(
+                settings.ollama_url,
+                json={
+                    "model": settings.ollama_model,
+                    "prompt": prompt,
+                    "system": SYSTEM_PROMPT_INDIVIDUAL,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.0,
+                        "num_ctx": settings.ollama_num_ctx,
+                    }
+                },
+                timeout=150
+            )
+            response.raise_for_status()
+            return response.json().get("response", "").strip()
+        except Exception as e:
+            logger.warning(f"Ollama individual query error for {category} (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                logger.info(f"Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                logger.error(f"Ollama individual query failed after {max_retries} attempts.")
+                return "NOT_FOUND"
+
+
+@router.get("/analyze/{job_id}")
+async def analyze_contract(job_id: str):
+    """
+    Runs the sequential individual extraction pipeline for maximum accuracy and focus.
     Returns extracted entities/clauses, risk assessment, and document metadata.
     """
+    from models.qa_pipeline import _clean_answer, _compute_confidence
+
+    doc_metadata = _get_document_metadata(job_id)
+    filename = doc_metadata.get("filename", "") or ""
+
     results = {}
     total_risk_score = 0
     high_risk_count = 0
     medium_risk_count = 0
-    
-    # Get document metadata early (for filename-based fallbacks)
-    doc_metadata = _get_document_metadata(job_id)
-    filename = doc_metadata.get("filename", "") or ""
-    
-    for category, question in CUAD_QUESTIONS.items():
-        chunks = _get_best_chunks(job_id, category, question)
+
+    # Process each category individually
+    for cat, question in CUAD_QUESTIONS.items():
+        logger.info(f"Processing category: {cat}")
         
-        query_with_context = question
-        if category in PREAMBLE_CATEGORIES and filename:
-            query_with_context = f"{question}\n(Document filename for reference: {filename})"
+        # Gather context chunks for the category
+        cat_chunks = await asyncio.to_thread(
+            _get_best_chunks_focused_optimized, job_id, cat, question
+        )
         
-        answer_data = answer_question(query=query_with_context, chunks=chunks)
-        answer = answer_data.get("answer")
-        score = answer_data.get("score", 0)
+        # Sort chunks by document order
+        cat_chunks.sort(key=lambda x: x.get("chunk_index", 0))
         
-        # Parties — comprehensive multi-step extraction
-        if category == "Parties":
-            import re
-            
-            needs_improvement = (not answer or " and " not in answer)
-            
-            if needs_improvement:
-                all_chunks = get_all_chunks(job_id)
-                full_text = " ".join(c["text"] for c in all_chunks)
+        context_parts = []
+        for c in cat_chunks:
+            sec = c.get("section_title", "")
+            txt = c.get("text", "")
+            if sec:
+                context_parts.append(f"[Section: {sec}]\n{txt}")
+            else:
+                context_parts.append(txt)
                 
-                entity_pattern = r'([A-Z][A-Za-z\s&,\.\'-]+(?:Inc\.|Corp\.|LLC|L\.P\.|Ltd\.|L\.L\.C\.|Co\.|N\.A\.|Limited|Corporation|Company))'
-                entities = re.findall(entity_pattern, full_text)
-                
-                seen = set()
-                unique_entities = []
-                for e in entities:
-                    cleaned = e.strip().rstrip(',').strip()
-                    normalized = cleaned.lower()
-                    if normalized not in seen and len(cleaned) > 5:
-                        seen.add(normalized)
-                        unique_entities.append(cleaned)
-                
-                if len(unique_entities) >= 2:
-                    entity_list = ", ".join(unique_entities[:10])
-                    party_q = (
-                        f"From this list of entities found in the contract, "
-                        f"which ones are the actual PARTIES (signatories) to this agreement? "
-                        f"List only the party names separated by ' and '.\n\n"
-                        f"Entities found: {entity_list}\n\n"
-                        f"Contract context: {full_text[:2000]}"
-                    )
-                    party_data = answer_question(query=party_q, chunks=[])
-                    party_answer = party_data.get("answer")
-                    if party_answer and len(party_answer) > 5:
-                        answer = party_answer
-                        score = 8.0
-                elif len(unique_entities) == 1 and not answer:
-                    answer = unique_entities[0]
-                    score = 6.0
-                
-                if answer and " and " not in answer and unique_entities:
-                    other_entities = [
-                        e for e in unique_entities 
-                        if e.lower() not in answer.lower() and answer.lower() not in e.lower()
-                    ]
-                    if other_entities:
-                        followup_q = (
-                            f"This contract involves {answer}. "
-                            f"The other entity mentioned is '{other_entities[0]}'. "
-                            f"Is '{other_entities[0]}' the other party to this agreement? "
-                            f"Answer with just the full legal name, or NOT_FOUND."
-                        )
-                        followup_data = answer_question(query=followup_q, chunks=chunks[:5])
-                        other_party = followup_data.get("answer")
-                        if other_party and other_party.lower() != answer.lower():
-                            answer = f"{answer} and {other_party}"
-                            score = 8.0
+        context = "\n\n---\n\n".join(context_parts)
         
-        # Document Name — filename fallback + SEC cleanup
-        if category == "Document Name":
-            import re
+        # Cap context per category to settings.max_context_chars
+        if len(context) > settings.max_context_chars:
+            # Sort by relevance to keep the best chunks
+            scored_chunks = sorted(cat_chunks, key=lambda x: x.get("score", 0), reverse=True)
+            kept_chunks = []
+            total_chars = 0
+            for c in scored_chunks:
+                chunk_text = c.get("text", "")
+                if total_chars + len(chunk_text) <= settings.max_context_chars:
+                    kept_chunks.append(c)
+                    total_chars += len(chunk_text)
+                else:
+                    break
+            kept_chunks.sort(key=lambda x: x.get("chunk_index", 0))
+            context_parts = []
+            for c in kept_chunks:
+                sec = c.get("section_title", "")
+                txt = c.get("text", "")
+                if sec:
+                    context_parts.append(f"[Section: {sec}]\n{txt}")
+                else:
+                    context_parts.append(txt)
+            context = "\n\n---\n\n".join(context_parts)
+
+        # Call Ollama for individual category
+        raw_res = await asyncio.to_thread(_query_ollama_individual, question, context, cat)
+        
+        # Smart refusal detection
+        is_refusal = False
+        cleaned_upper = raw_res.strip().upper()
+        if cleaned_upper in ("NOT_FOUND", "NOT FOUND", "N/A", "NONE"):
+            is_refusal = True
+        elif len(raw_res) < 80:
+            lower_ans = raw_res.lower()
+            refusal_phrases = [
+                "not found", "not mentioned", "not specified", "not provided",
+                "no information", "does not contain", "no such clause", "not addressed"
+            ]
+            if any(phrase in lower_ans for phrase in refusal_phrases):
+                is_refusal = True
+        
+        if is_refusal:
+            answer = None
+            score = 0.0
+        else:
+            answer = _clean_answer(raw_res)
+            # Strip HTML tags and stray angle brackets (from PDF cross-references)
+            if answer:
+                answer = re.sub(r'<a\s[^>]*>', '', answer)        # remove <a href=...>
+                answer = re.sub(r'</a>', '', answer)               # remove </a>
+                answer = re.sub(r'<[^>]+>', '', answer)            # remove any other HTML tags
+                answer = re.sub(r'a\s+href=["\'][^"\']*["\']', '', answer)  # remove leftover href attrs
+                answer = re.sub(r'https?://\S+', '', answer)       # remove bare URLs
+                answer = re.sub(r'^[\s<>]+', '', answer).strip()   # strip leading < or >
+                if len(answer) < 15:
+                    answer = None
+            if not answer:
+                score = 0.0
+            else:
+                score = _compute_confidence(answer, question, cat)
+        
+        # Special category handling
+        # Document Name fallback
+        if cat == "Document Name":
             if not answer and filename:
                 answer = _extract_document_name_from_filename(filename)
                 if answer:
                     score = 7.0
-            
-            # Clean up SEC filing numbers from Document Name
             if answer:
-                answer = re.sub(r'^\d+\s+', '', answer)  # Remove leading numbers
-                answer = re.sub(r'^EX-[\d.]+\s*', '', answer, flags=re.IGNORECASE)  # Remove EX-10.10
-        
-        # Retry with ALL chunks for critical NOT_FOUND fields
-        retry_categories = {
-            "Expiration Date", "Renewal Term", "Effective Date", 
-            "Assignment", "Limitation of Liability", "Indemnification",
-            "Termination for Cause",
-        }
-        if not answer and category in retry_categories:
-            logger.warning(f"[RETRY] {category} returned NOT_FOUND — retrying with all chunks")
-            all_chunks = get_all_chunks(job_id)
-            if all_chunks:
-                retry_data = answer_question(query=question, chunks=all_chunks)
-                retry_answer = retry_data.get("answer")
-                retry_score = retry_data.get("score", 0)
-                if retry_answer:
-                    answer = retry_answer
-                    score = retry_score
-        
-        # Assess risk
-        risk_level, risk_flag, risk_points = _assess_risk(category, answer, score)
+                answer = re.sub(r'^\d+\s+', '', answer)
+                answer = re.sub(r'^EX-[\d.]+\s*', '', answer, flags=re.IGNORECASE)
+
+        # Parties multi-step fallback
+        if cat == "Parties":
+            answer, score = _extract_parties(answer, score, cat_chunks, job_id, question)
+
+        # Risk Assessment
+        risk_level, risk_flag, risk_points = _assess_risk(cat, answer, score)
         total_risk_score += risk_points
         
         if risk_level == "HIGH":
             high_risk_count += 1
         elif risk_level == "MEDIUM":
             medium_risk_count += 1
-        
+            
         # Determine confidence label
         if not answer:
             confidence_label = "NOT_FOUND"
-        elif score >= HIGH_CONFIDENCE:
+        elif score >= settings.confidence_high:
             confidence_label = "HIGH"
-        elif score >= LOW_CONFIDENCE:
+        elif score >= settings.confidence_low:
             confidence_label = "MEDIUM"
         else:
             confidence_label = "LOW"
-        
-        results[category] = {
+            
+        results[cat] = {
             "question": question,
             "extracted_answer": answer,
             "confidence_score": round(score, 4),
@@ -349,7 +589,7 @@ def analyze_contract(job_id: str):
             "risk_level": risk_level,
             "risk_flag": risk_flag,
         }
-    
+
     if total_risk_score >= 15:
         overall_risk = "CRITICAL"
     elif total_risk_score >= 8:
@@ -358,7 +598,7 @@ def analyze_contract(job_id: str):
         overall_risk = "MEDIUM"
     else:
         overall_risk = "LOW"
-    
+
     return {
         "job_id": job_id,
         "document": doc_metadata,
@@ -378,17 +618,17 @@ def debug_chunks(job_id: str):
     """Debug endpoint: view all stored text chunks with section metadata."""
     from core.vector_db import client, COLLECTION_NAME
     from qdrant_client.models import Filter, FieldCondition, MatchValue
-    
+
     query_filter = Filter(
         must=[FieldCondition(key="job_id", match=MatchValue(value=job_id))]
     )
-    
+
     results = client.scroll(
         collection_name=COLLECTION_NAME,
         scroll_filter=query_filter,
         limit=200,
     )
-    
+
     chunks = []
     for point in results[0]:
         chunks.append({
@@ -396,9 +636,9 @@ def debug_chunks(job_id: str):
             "section_title": point.payload.get("section_title", ""),
             "text": point.payload.get("text", ""),
         })
-    
+
     chunks.sort(key=lambda x: x["chunk_index"])
-    
+
     return {
         "job_id": job_id,
         "total_chunks": len(chunks),

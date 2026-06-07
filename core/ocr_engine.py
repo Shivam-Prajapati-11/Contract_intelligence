@@ -1,6 +1,9 @@
 import os
+from core.config import settings
+
+# Must set these environment variables before importing paddle/paddleocr!
 os.environ["FLAGS_allocator_strategy"] = "auto_growth"
-os.environ["FLAGS_fraction_of_gpu_memory_to_use"] = "0.1"
+os.environ["FLAGS_fraction_of_gpu_memory_to_use"] = os.getenv("FLAGS_fraction_of_gpu_memory_to_use", "0.1")
 
 import logging
 import torch
@@ -11,7 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 def _detect_gpu() -> bool:
-    """Returns True if paddlepaddle-gpu is installed and a CUDA GPU is found."""
+    """Returns True if paddlepaddle-gpu is installed, allowed by config, and a CUDA GPU is found."""
+    if not settings.ocr_use_gpu:
+        logger.info("PaddleOCR: GPU disabled by configuration (ocr_use_gpu=False) — using CPU.")
+        return False
+
     try:
         import paddle
         if paddle.device.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
@@ -50,7 +57,16 @@ _LANG_MAP: dict[str, str] = {
 def _get_engine(lang: str = "en", angle_cls: bool = False) -> PaddleOCR:
     """Returns a cached PaddleOCR engine. angle_cls=False for documents, True for raw images."""
     logger.info("PaddleOCR: loading engine lang='%s' angle_cls=%s gpu=%s.", lang, angle_cls, USE_GPU)
-    return PaddleOCR(use_angle_cls=angle_cls, lang=lang, use_gpu=USE_GPU, show_log=False)
+    return PaddleOCR(
+        use_angle_cls=angle_cls,
+        lang=lang,
+        use_gpu=USE_GPU,
+        show_log=False,
+        gpu_id=settings.ocr_gpu_id,
+        gpu_mem=settings.ocr_gpu_mem,
+        cpu_threads=settings.ocr_cpu_threads,
+        enable_mkldnn=settings.ocr_enable_mkldnn,
+    )
 
 
 def _detect_language(text: str) -> str:

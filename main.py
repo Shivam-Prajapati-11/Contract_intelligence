@@ -1,3 +1,7 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"     # Keep PyTorch off GPU — Ollama owns VRAM exclusively
+os.environ["TRANSFORMERS_OFFLINE"] = "1"      # Use cached HF model — skip 30s network checks that race with Ollama's VRAM load
+os.environ["HF_DATASETS_OFFLINE"] = "1"       # Same — prevent huggingface_hub background polling
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -17,11 +21,44 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
+    import asyncio, requests as _req
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
     logger.info(f"Ollama model: {settings.ollama_model}")
     logger.info(f"Qdrant: {settings.qdrant_url}")
+
+    # Step 1: Pre-load the SentenceTransformer on CPU first (before Ollama loads its model).
+    # This prevents the TDR crash where both load simultaneously and the GPU scheduler
+    # resets due to unresponsiveness, killing Ollama's CUDA context.
+    try:
+        logger.info("Pre-loading SentenceTransformer embedding model on CPU...")
+        from core.vector_db import _get_search_model
+        await asyncio.to_thread(_get_search_model)
+        logger.info("SentenceTransformer ready.")
+    except Exception as e:
+        logger.warning(f"Embedding model pre-load failed (non-fatal): {e}")
+
+    # Step 2: Warm up Ollama — send a tiny generate request so qwen2.5:7b is already
+    # loaded in VRAM when the first analyze request arrives (avoids cold-start race).
+    try:
+        logger.info(f"Warming up Ollama ({settings.ollama_model})...")
+        warmup = await asyncio.to_thread(
+            lambda: _req.post(
+                settings.ollama_url,
+                json={"model": settings.ollama_model, "prompt": "OK", "stream": False,
+                      "options": {"num_predict": 1, "num_ctx": settings.ollama_num_ctx}},
+                timeout=120,
+            )
+        )
+        if warmup.status_code == 200:
+            logger.info("Ollama warmed up — model loaded in VRAM.")
+        else:
+            logger.warning(f"Ollama warmup returned {warmup.status_code}")
+    except Exception as e:
+        logger.warning(f"Ollama warmup failed (non-fatal, will retry on first request): {e}")
+
     yield
     logger.info("Shutting down...")
+
 
 
 app = FastAPI(
