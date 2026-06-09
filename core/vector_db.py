@@ -69,12 +69,8 @@ _search_model = None
 def _get_search_model():
     global _search_model
     if _search_model is None:
-        import os
-        # Prevent PyTorch CUDA context init from stealing Ollama's VRAM.
-        # CUDA_VISIBLE_DEVICES=-1 hides all GPUs from this Python process.
-        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
         from sentence_transformers import SentenceTransformer
-        logger.info("Initializing search SentenceTransformer on device=cpu (CUDA hidden from PyTorch)...")
+        logger.info("Initializing search SentenceTransformer on device=cpu...")
         _search_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
     return _search_model
 

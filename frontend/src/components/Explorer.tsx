@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronDown, AlertTriangle } from 'lucide-react';
 
 interface ExtractionItem {
@@ -8,6 +8,7 @@ interface ExtractionItem {
   confidence_label: string;
   risk_level: string;
   risk_flag: string | null;
+  status?: 'waiting' | 'analyzing' | 'completed';
 }
 
 interface ExplorerProps {
@@ -40,6 +41,14 @@ export const Explorer: React.FC<ExplorerProps> = ({ results }) => {
     setActiveCategory(activeCategory === category ? null : category);
   };
 
+  // Auto-expand category when it starts analyzing
+  useEffect(() => {
+    const analyzingCat = Object.entries(results).find(([_, item]) => item.status === 'analyzing');
+    if (analyzingCat) {
+      setActiveCategory(analyzingCat[0]);
+    }
+  }, [results]);
+
   return (
     <div className="explorer-panel">
       <div className="explorer-header">
@@ -49,35 +58,55 @@ export const Explorer: React.FC<ExplorerProps> = ({ results }) => {
 
       <div className="accordion-list">
         {Object.entries(results).map(([category, item]) => {
+          const status = item.status || 'completed';
+          const isWaiting = status === 'waiting';
+          const isAnalyzing = status === 'analyzing';
+          const isCompleted = status === 'completed';
+
           const isActive = activeCategory === category;
           const emoji = categoryEmojis[category] || '📄';
           
-          const hasRisk = item.risk_level !== 'LOW' && item.risk_level !== 'NONE' && item.risk_level !== 'NOT_FOUND';
+          const hasRisk = isCompleted && item.risk_level !== 'LOW' && item.risk_level !== 'NONE' && item.risk_level !== 'NOT_FOUND';
           const confidenceColor = `var(--conf-${(item.confidence_label || 'low').toLowerCase().replace(' ', '_')})`;
 
           return (
             <div 
               key={category} 
-              className={`accordion-item ${isActive ? 'active' : ''}`}
+              className={`accordion-item ${isActive ? 'active' : ''} ${isAnalyzing ? 'analyzing' : ''}`}
             >
               <div 
                 className="accordion-header" 
                 onClick={() => toggleCategory(category)}
               >
                 <div className="accordion-header-left">
+                  <span className={`category-status-dot ${status}`} style={{ marginRight: '8px' }} />
                   <span className="category-icon">{emoji}</span>
                   <span className="category-title">{category}</span>
                 </div>
                 
                 <div className="accordion-header-right">
-                  {hasRisk && (
-                    <span className={`badge badge-risk-${item.risk_level}`}>
-                      {item.risk_level} Risk
+                  {isWaiting && (
+                    <span className="badge" style={{ background: 'rgba(255, 255, 255, 0.03)', color: 'var(--text-muted)' }}>
+                      Waiting
                     </span>
                   )}
-                  <span className={`badge badge-conf-${item.confidence_label}`}>
-                    {item.confidence_label}
-                  </span>
+                  {isAnalyzing && (
+                    <span className="badge badge-processing" style={{ animation: 'pulse-glow 1.5s infinite ease-in-out' }}>
+                      Analyzing...
+                    </span>
+                  )}
+                  {isCompleted && (
+                    <>
+                      {hasRisk && (
+                        <span className={`badge badge-risk-${item.risk_level}`}>
+                          {item.risk_level} Risk
+                        </span>
+                      )}
+                      <span className={`badge badge-conf-${item.confidence_label}`}>
+                        {item.confidence_label}
+                      </span>
+                    </>
+                  )}
                   <span className="chevron-icon">
                     <ChevronDown size={16} />
                   </span>
@@ -96,11 +125,11 @@ export const Explorer: React.FC<ExplorerProps> = ({ results }) => {
                     <strong>Prompt Target:</strong> "{item.question || 'What is the detail?'}"
                   </div>
 
-                  <div className={`clause-block ${item.extracted_answer ? '' : 'not-found'}`}>
-                    {item.extracted_answer || 'No matching clause or information was identified in this contract.'}
+                  <div className={`clause-block ${item.extracted_answer ? '' : 'not-found'} ${isAnalyzing ? 'streaming-text-cursor' : ''}`}>
+                    {item.extracted_answer || (isAnalyzing ? 'Analyzing context and generating answer...' : isWaiting ? 'Pending analysis...' : 'No matching clause or information was identified in this contract.')}
                   </div>
 
-                  {item.risk_flag && (
+                  {isCompleted && item.risk_flag && (
                     <div className={`risk-alert-banner alert-${item.risk_level}`}>
                       <span className="risk-alert-banner-icon">
                         <AlertTriangle size={16} />
@@ -111,19 +140,21 @@ export const Explorer: React.FC<ExplorerProps> = ({ results }) => {
                     </div>
                   )}
 
-                  <div className="confidence-rating">
-                    <span>Confidence Index:</span>
-                    <div className="confidence-bar-outer">
-                      <div 
-                        className="confidence-bar-inner" 
-                        style={{ 
-                          width: `${(item.confidence_score || 0) * 10}%`, 
-                          backgroundColor: confidenceColor 
-                        }} 
-                      />
+                  {isCompleted && (
+                    <div className="confidence-rating">
+                      <span>Confidence Index:</span>
+                      <div className="confidence-bar-outer">
+                        <div 
+                          className="confidence-bar-inner" 
+                          style={{ 
+                            width: `${(item.confidence_score || 0) * 10}%`, 
+                            backgroundColor: confidenceColor 
+                          }} 
+                        />
+                      </div>
+                      <span>{item.confidence_score}/10</span>
                     </div>
-                    <span>{item.confidence_score}/10</span>
-                  </div>
+                  )}
                 </div>
               </div>
             </div>

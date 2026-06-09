@@ -3,6 +3,7 @@ import re
 import logging
 import asyncio
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from core.config import settings
 from core.vector_db import search_chunks, get_chunks_by_order, get_all_chunks, keyword_search_chunks
 from models.qa_pipeline import answer_question
@@ -445,6 +446,271 @@ ANSWER:"""
             else:
                 logger.error(f"Ollama individual query failed after {max_retries} attempts.")
                 return "NOT_FOUND"
+
+
+async def _query_ollama_individual_stream(question: str, context: str, category: str, max_retries: int = 3, retry_delay: float = 5.0):
+    """Call Ollama with streaming enabled and retry logic, yielding text chunks in real-time."""
+    import httpx
+    import json
+    import asyncio
+    from models.qa_pipeline import CATEGORY_HINTS
+
+    SYSTEM_PROMPT_INDIVIDUAL = "You are a precise legal contract analyst. Extract the exact relevant clauses from the contract text."
+
+    hint = CATEGORY_HINTS.get(category, "")
+    hint_block = f"\nEXTRACTION HINTS: {hint}\n" if hint else ""
+
+    extra_guidelines = ""
+    if category == "Termination for Convenience":
+        extra_guidelines = (
+            "\n5. If a party has a right to terminate the contract upon notice or under certain conditions (even if "
+            "heavily redacted with [**], like eBix terminating under Section 13.1), you MUST extract this as the "
+            "Termination for Convenience clause. Do not return NOT_FOUND if such a termination clause is present."
+        )
+
+    prompt = f"""You are a professional legal contract analyst. Extract the answer to the question below from the contract text.
+If the information is genuinely not present in the text, respond with exactly: NOT_FOUND.
+{hint_block}
+Think step by step: first identify the relevant clauses or sections, then extract the specific answer.
+
+IMPORTANT GUIDELINES:
+1. Provide a direct quote or the exact text from the contract. Do not summarize unless necessary.
+2. If a clause is present but contains redacted placeholders (like [**]), you must still extract the clause.
+3. If a clause uses different terminology (e.g. 'assign' or 'transfer' for assignment, 'exclusivity' or 'proprietary' or 'ownership of data' for IP ownership, 'terminate... without cause' or 'terminate... upon notice' for termination for convenience), you must still extract it.{extra_guidelines}
+4. Do not return NOT_FOUND if there is a clause that addresses the general topic of the question.
+
+QUESTION: {question}
+
+CONTRACT TEXT:
+{context}
+
+ANSWER:"""
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=150.0) as client:
+                async with client.stream(
+                    "POST",
+                    settings.ollama_url,
+                    json={
+                        "model": settings.ollama_model,
+                        "prompt": prompt,
+                        "system": SYSTEM_PROMPT_INDIVIDUAL,
+                        "stream": True,
+                        "options": {
+                            "temperature": 0.0,
+                            "num_ctx": settings.ollama_num_ctx,
+                        }
+                    }
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line:
+                            chunk = json.loads(line)
+                            yield chunk.get("response", "")
+            return
+        except Exception as e:
+            logger.warning(f"Ollama streaming query error for {category} (attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                logger.info(f"Retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error(f"Ollama streaming query failed after {max_retries} attempts.")
+                yield "NOT_FOUND"
+
+
+@router.get("/analyze/stream/{job_id}")
+async def analyze_contract_stream(job_id: str):
+    """
+    Runs the sequential individual extraction pipeline for maximum accuracy and focus,
+    streaming the results in real-time via Server-Sent Events (SSE).
+    """
+    from models.qa_pipeline import _clean_answer, _compute_confidence
+    import json
+
+    async def event_generator():
+        try:
+            doc_metadata = _get_document_metadata(job_id)
+            filename = doc_metadata.get("filename", "") or ""
+
+            results = {}
+            total_risk_score = 0
+            high_risk_count = 0
+            medium_risk_count = 0
+
+            # Process each category individually
+            for cat, question in CUAD_QUESTIONS.items():
+                logger.info(f"[STREAM] Processing category: {cat}")
+                
+                # Yield START event
+                yield f"data: {json.dumps({'status': 'start', 'category': cat, 'question': question})}\n\n"
+                await asyncio.sleep(0.01)
+
+                # Gather context chunks for the category
+                cat_chunks = await asyncio.to_thread(
+                    _get_best_chunks_focused_optimized, job_id, cat, question
+                )
+                
+                # Sort chunks by document order
+                cat_chunks.sort(key=lambda x: x.get("chunk_index", 0))
+                
+                context_parts = []
+                for c in cat_chunks:
+                    sec = c.get("section_title", "")
+                    txt = c.get("text", "")
+                    if sec:
+                        context_parts.append(f"[Section: {sec}]\n{txt}")
+                    else:
+                        context_parts.append(txt)
+                        
+                context = "\n\n---\n\n".join(context_parts)
+                
+                # Cap context per category to settings.max_context_chars
+                if len(context) > settings.max_context_chars:
+                    scored_chunks = sorted(cat_chunks, key=lambda x: x.get("score", 0), reverse=True)
+                    kept_chunks = []
+                    total_chars = 0
+                    for c in scored_chunks:
+                        chunk_text = c.get("text", "")
+                        if total_chars + len(chunk_text) <= settings.max_context_chars:
+                            kept_chunks.append(c)
+                            total_chars += len(chunk_text)
+                        else:
+                            break
+                    kept_chunks.sort(key=lambda x: x.get("chunk_index", 0))
+                    context_parts = []
+                    for c in kept_chunks:
+                        sec = c.get("section_title", "")
+                        txt = c.get("text", "")
+                        if sec:
+                            context_parts.append(f"[Section: {sec}]\n{txt}")
+                        else:
+                            context_parts.append(txt)
+                    context = "\n\n---\n\n".join(context_parts)
+
+                # Query Ollama with streaming
+                raw_res_parts = []
+                async for text_chunk in _query_ollama_individual_stream(question, context, cat):
+                    raw_res_parts.append(text_chunk)
+                    yield f"data: {json.dumps({'status': 'chunk', 'category': cat, 'text': text_chunk})}\n\n"
+                    await asyncio.sleep(0.001)
+
+                raw_res = "".join(raw_res_parts)
+                
+                # Smart refusal detection
+                is_refusal = False
+                cleaned_upper = raw_res.strip().upper()
+                if cleaned_upper in ("NOT_FOUND", "NOT FOUND", "N/A", "NONE"):
+                    is_refusal = True
+                elif len(raw_res) < 80:
+                    lower_ans = raw_res.lower()
+                    refusal_phrases = [
+                        "not found", "not mentioned", "not specified", "not provided",
+                        "no information", "does not contain", "no such clause", "not addressed"
+                    ]
+                    if any(phrase in lower_ans for phrase in refusal_phrases):
+                        is_refusal = True
+                
+                if is_refusal:
+                    answer = None
+                    score = 0.0
+                else:
+                    answer = _clean_answer(raw_res)
+                    if answer:
+                        answer = re.sub(r'<a\s[^>]*>', '', answer)
+                        answer = re.sub(r'</a>', '', answer)
+                        answer = re.sub(r'<[^>]+>', '', answer)
+                        answer = re.sub(r'a\s+href=["\'][^"\']*["\']', '', answer)
+                        answer = re.sub(r'https?://\S+', '', answer)
+                        answer = re.sub(r'^[\s<>]+', '', answer).strip()
+                        if len(answer) < 15:
+                            answer = None
+                    if not answer:
+                        score = 0.0
+                    else:
+                        score = _compute_confidence(answer, question, cat)
+                
+                # Special category fallback logic
+                if cat == "Document Name":
+                    if not answer and filename:
+                        answer = _extract_document_name_from_filename(filename)
+                        if answer:
+                            score = 7.0
+                    if answer:
+                        answer = re.sub(r'^\d+\s+', '', answer)
+                        answer = re.sub(r'^EX-[\d.]+\s*', '', answer, flags=re.IGNORECASE)
+
+                if cat == "Parties":
+                    answer, score = _extract_parties(answer, score, cat_chunks, job_id, question)
+
+                # Risk Assessment
+                risk_level, risk_flag, risk_points = _assess_risk(cat, answer, score)
+                total_risk_score += risk_points
+                
+                if risk_level == "HIGH":
+                    high_risk_count += 1
+                elif risk_level == "MEDIUM":
+                    medium_risk_count += 1
+                    
+                if not answer:
+                    confidence_label = "NOT_FOUND"
+                elif score >= settings.confidence_high:
+                    confidence_label = "HIGH"
+                elif score >= settings.confidence_low:
+                    confidence_label = "MEDIUM"
+                else:
+                    confidence_label = "LOW"
+                    
+                results[cat] = {
+                    "question": question,
+                    "extracted_answer": answer,
+                    "confidence_score": round(score, 4),
+                    "confidence_label": confidence_label,
+                    "risk_level": risk_level,
+                    "risk_flag": risk_flag,
+                }
+
+                # Yield DONE event for this category
+                yield f"data: {json.dumps({
+                    'status': 'done',
+                    'category': cat,
+                    'extracted_answer': answer,
+                    'confidence_score': round(score, 4),
+                    'confidence_label': confidence_label,
+                    'risk_level': risk_level,
+                    'risk_flag': risk_flag,
+                    'risk_points': risk_points
+                })}\n\n"
+                await asyncio.sleep(0.01)
+
+            # Post-process overall risk summary
+            if total_risk_score >= 15:
+                overall_risk = "CRITICAL"
+            elif total_risk_score >= 8:
+                overall_risk = "HIGH"
+            elif total_risk_score >= 3:
+                overall_risk = "MEDIUM"
+            else:
+                overall_risk = "LOW"
+
+            final_summary = {
+                "overall_risk": overall_risk,
+                "total_risk_score": total_risk_score,
+                "high_risk_flags": high_risk_count,
+                "medium_risk_flags": medium_risk_count,
+                "categories_analyzed": len(CUAD_QUESTIONS),
+            }
+
+            # Yield FINAL event
+            yield f"data: {json.dumps({
+                'status': 'final_summary',
+                'risk_summary': final_summary
+            })}\n\n"
+        except Exception as e:
+            logger.error(f"[STREAM] Error during contract streaming analysis: {e}", exc_info=True)
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/analyze/{job_id}")

@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"     # Keep PyTorch off GPU — Ollama owns VRAM exclusively
 
 # Enable offline mode only if the embedding model is already cached to prevent startup errors on first run.
 hf_cache = Path(os.path.expanduser("~/.cache/huggingface/hub"))
@@ -30,11 +29,67 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def ensure_ollama_running():
+    import socket
+    import subprocess
+    import time
+
+    # Check if port is open
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1)
+    try:
+        s.connect(("127.0.0.1", 11434))
+        s.close()
+        logger.info("Ollama is already running.")
+        return True
+    except socket.error:
+        pass
+
+    logger.info("Ollama is not running. Attempting to start 'ollama serve' in background...")
+    try:
+        startupinfo = None
+        creationflags = 0
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            startupinfo=startupinfo,
+            creationflags=creationflags
+        )
+        
+        # Poll the port for up to 30 seconds
+        for i in range(30):
+            time.sleep(1)
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            try:
+                s.connect(("127.0.0.1", 11434))
+                s.close()
+                logger.info(f"Ollama started successfully after {i+1} seconds.")
+                return True
+            except socket.error:
+                pass
+        logger.error("Ollama serve took too long to start.")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to start Ollama automatically: {e}")
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     import asyncio, requests as _req
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
+
+    # Ensure Ollama is running
+    await asyncio.to_thread(ensure_ollama_running)
+
     logger.info(f"Ollama model: {settings.ollama_model}")
     logger.info(f"Qdrant: {settings.qdrant_url}")
 

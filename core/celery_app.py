@@ -1,5 +1,4 @@
 import os, sys
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"   # Hide GPU from PyTorch so Ollama owns VRAM exclusively
 os.environ["TRANSFORMERS_OFFLINE"] = "1"    # Load ST model from cache — skip HF Hub 30s network checks
 os.environ["HF_DATASETS_OFFLINE"] = "1"     # Same — prevent huggingface_hub background polling
 # Ensure the project root is in sys.path so all local packages are importable

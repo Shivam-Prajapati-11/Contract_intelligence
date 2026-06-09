@@ -52,6 +52,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFilesSelected }) => {
         ref={fileInputRef}
         onChange={handleFileChange}
         className="file-input" 
+        style={{ display: 'none' }}
         multiple 
         accept=".pdf,.docx,.png,.jpg,.jpeg"
       />

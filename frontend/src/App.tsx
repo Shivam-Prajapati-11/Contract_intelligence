@@ -15,9 +15,28 @@ export default function App() {
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [debugData, setDebugData] = useState<any>({ total_chunks: '-', sections: [] });
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [threads, setThreads] = useState<any[]>([]);
 
   // Keep track of active poll intervals
   const activePolls = useRef<Record<string, number>>({});
+  const debugDataRef = useRef(debugData);
+
+  // Load threads history on mount
+  useEffect(() => {
+    const loadedThreads = localStorage.getItem('zaalima_threads');
+    if (loadedThreads) {
+      try {
+        setThreads(JSON.parse(loadedThreads));
+      } catch (err) {
+        console.error('Failed to parse history threads', err);
+      }
+    }
+  }, []);
+
+  // Sync debugDataRef with state
+  useEffect(() => {
+    debugDataRef.current = debugData;
+  }, [debugData]);
 
   // Clean up all active intervals when App unmounts
   useEffect(() => {
@@ -36,7 +55,6 @@ export default function App() {
   const uploadFile = async (file: File) => {
     const tempId = `uploading-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     
-    // 1. Create a placeholder job card
     const newJob: Job = {
       id: tempId,
       filename: file.name,
@@ -64,7 +82,6 @@ export default function App() {
       const data = await res.json();
       const jobId = data.job_id;
 
-      // 2. Replace the placeholder job with the real job ID and start polling
       setJobs((prev) =>
         prev.map((job) =>
           job.id === tempId
@@ -97,7 +114,6 @@ export default function App() {
         const data = await res.json();
         
         if (data.status === 'completed') {
-          // Clear interval
           window.clearInterval(intervalId);
           delete activePolls.current[jobId];
 
@@ -120,7 +136,6 @@ export default function App() {
             )
           );
         } else {
-          // Update processing progress
           setJobs((prev) =>
             prev.map((job) =>
               job.id === jobId
@@ -137,13 +152,27 @@ export default function App() {
     activePolls.current[jobId] = intervalId;
   };
 
-  const handleAnalyze = async (jobId: string, filename: string) => {
-    setIsAnalyzing(true);
-    setSelectedJobId(jobId);
-    setSelectedFilename(filename);
+  const saveToHistory = (jobId: string, filename: string, finalData: any) => {
+    setThreads((prevThreads) => {
+      const filtered = prevThreads.filter((t) => t.id !== jobId);
+      const newThread = {
+        id: jobId,
+        filename: filename,
+        timestamp: new Date().toLocaleString(),
+        riskSummary: finalData.risk_summary,
+        extraction_results: finalData.extraction_results,
+        debugData: debugDataRef.current || { total_chunks: '-', sections: [] }
+      };
+      
+      const updated = [newThread, ...filtered];
+      localStorage.setItem('zaalima_threads', JSON.stringify(updated));
+      return updated;
+    });
+  };
 
+  const fetchStaticAnalysis = async (jobId: string, filename: string) => {
+    setIsAnalyzing(true);
     try {
-      // Fetch analysis results & chunks metadata in parallel
       const [analysisRes, debugRes] = await Promise.all([
         fetch(`${API_BASE_URL}/analyze/${jobId}`),
         fetch(`${API_BASE_URL}/debug/chunks/${jobId}`)
@@ -157,11 +186,194 @@ export default function App() {
       setAnalysisData(analysisJson);
       setDebugData(debugJson);
       setView('dashboard');
+      
+      saveToHistory(jobId, filename, analysisJson);
     } catch (err: any) {
-      console.error('Analysis error', err);
-      alert(`Analysis failed: ${err.message}`);
+      console.error('Static fallback error:', err);
+      alert(`Fallback analysis failed: ${err.message}`);
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleAnalyze = async (jobId: string, filename: string) => {
+    setIsAnalyzing(true);
+    setSelectedJobId(jobId);
+    setSelectedFilename(filename);
+
+    // Fetch debug chunks info in background
+    fetch(`${API_BASE_URL}/debug/chunks/${jobId}`)
+      .then((res) => (res.ok ? res.json() : { total_chunks: '-', sections: [] }))
+      .then((debugJson) => setDebugData(debugJson))
+      .catch((err) => console.error('Failed to load debug chunks', err));
+
+    // Initialize blank results for 16 categories
+    const categories = [
+      "Document Name", "Parties", "Effective Date", "Expiration Date",
+      "Governing Law", "Assignment", "Renewal Term", "Payment Terms",
+      "Limitation of Liability", "Indemnification", "Non-Compete",
+      "Confidentiality", "Non-Solicitation", "Termination for Convenience",
+      "Termination for Cause", "Intellectual Property Ownership"
+    ];
+    const initialResults: Record<string, any> = {};
+    for (const cat of categories) {
+      initialResults[cat] = {
+        question: `Extracting ${cat.toLowerCase()}...`,
+        extracted_answer: "",
+        confidence_score: 0,
+        confidence_label: "NOT_FOUND",
+        risk_level: "LOW",
+        risk_flag: null,
+        status: "waiting"
+      };
+    }
+    
+    setAnalysisData({
+      job_id: jobId,
+      risk_summary: {
+        overall_risk: "LOW",
+        total_risk_score: 0,
+        high_risk_flags: 0,
+        medium_risk_flags: 0,
+        categories_analyzed: 0
+      },
+      extraction_results: initialResults
+    });
+    
+    setView('dashboard');
+
+    try {
+      const eventSource = new EventSource(`${API_BASE_URL}/analyze/stream/${jobId}`);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.status === 'start') {
+            setAnalysisData((prev: any) => {
+              if (!prev) return prev;
+              const updatedResults = { ...prev.extraction_results };
+              if (updatedResults[data.category]) {
+                updatedResults[data.category] = {
+                  ...updatedResults[data.category],
+                  question: data.question,
+                  status: 'analyzing',
+                  extracted_answer: ''
+                };
+              }
+              return { ...prev, extraction_results: updatedResults };
+            });
+          }
+          
+          else if (data.status === 'chunk') {
+            setAnalysisData((prev: any) => {
+              if (!prev) return prev;
+              const updatedResults = { ...prev.extraction_results };
+              if (updatedResults[data.category]) {
+                updatedResults[data.category] = {
+                  ...updatedResults[data.category],
+                  extracted_answer: (updatedResults[data.category].extracted_answer || '') + data.text
+                };
+              }
+              return { ...prev, extraction_results: updatedResults };
+            });
+          }
+          
+          else if (data.status === 'done') {
+            setAnalysisData((prev: any) => {
+              if (!prev) return prev;
+              const updatedResults = { ...prev.extraction_results };
+              if (updatedResults[data.category]) {
+                updatedResults[data.category] = {
+                  ...updatedResults[data.category],
+                  status: 'completed',
+                  extracted_answer: data.extracted_answer,
+                  confidence_score: data.confidence_score,
+                  confidence_label: data.confidence_label,
+                  risk_level: data.risk_level,
+                  risk_flag: data.risk_flag
+                };
+              }
+              
+              const resultsList = Object.values(updatedResults);
+              const highRiskCount = resultsList.filter((r: any) => r.status === 'completed' && r.risk_level === 'HIGH').length;
+              const medRiskCount = resultsList.filter((r: any) => r.status === 'completed' && r.risk_level === 'MEDIUM').length;
+              const totalScore = resultsList.reduce((sum: number, r: any) => {
+                if (r.status !== 'completed') return sum;
+                if (r.risk_level === 'HIGH') return sum + 5;
+                if (r.risk_level === 'MEDIUM') return sum + 3;
+                return sum;
+              }, 0);
+              
+              return {
+                ...prev,
+                risk_summary: {
+                  ...prev.risk_summary,
+                  total_risk_score: totalScore,
+                  high_risk_flags: highRiskCount,
+                  medium_risk_flags: medRiskCount,
+                  categories_analyzed: resultsList.filter((r: any) => r.status === 'completed').length
+                },
+                extraction_results: updatedResults
+              };
+            });
+          }
+          
+          else if (data.status === 'final_summary') {
+            eventSource.close();
+            setIsAnalyzing(false);
+            
+            setAnalysisData((prev: any) => {
+              if (!prev) return prev;
+              const finalState = {
+                ...prev,
+                risk_summary: {
+                  ...prev.risk_summary,
+                  ...data.risk_summary
+                }
+              };
+              
+              saveToHistory(jobId, filename, finalState);
+              return finalState;
+            });
+          }
+          
+          else if (data.status === 'error') {
+            console.error('SSE backend error:', data.message);
+            eventSource.close();
+            setIsAnalyzing(false);
+            alert(`Analysis stream error: ${data.message}`);
+          }
+        } catch (err) {
+          console.error('Error parsing SSE event:', err);
+        }
+      };
+
+      eventSource.onerror = (err) => {
+        console.error('EventSource connection failed:', err);
+        eventSource.close();
+        setIsAnalyzing(false);
+        fetchStaticAnalysis(jobId, filename);
+      };
+    } catch (err) {
+      console.error('Error starting analysis stream:', err);
+      setIsAnalyzing(false);
+      fetchStaticAnalysis(jobId, filename);
+    }
+  };
+
+  const handleSelectThread = (threadId: string) => {
+    const thread = threads.find((t) => t.id === threadId);
+    if (thread) {
+      setSelectedJobId(thread.id);
+      setSelectedFilename(thread.filename);
+      setAnalysisData({
+        job_id: thread.id,
+        risk_summary: thread.riskSummary,
+        extraction_results: thread.extraction_results
+      });
+      setDebugData(thread.debugData);
+      setView('dashboard');
     }
   };
 
@@ -173,50 +385,50 @@ export default function App() {
     setSelectedFilename(null);
   };
 
+  const handleDeleteThread = (threadId: string) => {
+    setThreads((prev) => {
+      const updated = prev.filter((t) => t.id !== threadId);
+      localStorage.setItem('zaalima_threads', JSON.stringify(updated));
+      return updated;
+    });
+    
+    if (selectedJobId === threadId) {
+      handleBackToUpload();
+    }
+  };
+
+  const pendingJobs = jobs.filter((job) => !threads.some((t) => t.id === job.id));
+
   return (
     <div className="container">
       {/* Header showing logo & live health indicator */}
       <Header />
 
-      {/* Main Views */}
-      {view === 'upload' ? (
-        <div className="upload-view">
-          <div className="glass-card">
-            <UploadZone onFilesSelected={handleFilesSelected} />
-            <ActiveJobs jobs={jobs} onAnalyze={handleAnalyze} />
-          </div>
-        </div>
-      ) : (
-        <div className="dashboard-view">
-          <Sidebar 
-            filename={selectedFilename || 'Contract'} 
-            jobId={selectedJobId || ''} 
-            debugData={debugData} 
-            riskSummary={analysisData?.risk_summary || { overall_risk: 'LOW', total_risk_score: 0, high_risk_flags: 0, medium_risk_flags: 0 }}
-            onBackToUpload={handleBackToUpload}
-          />
-          <Explorer results={analysisData?.extraction_results || {}} />
-        </div>
-      )}
-
-      {/* Glowing Loading Modal Overlay */}
-      {isAnalyzing && (
-        <div className="analysis-loader-overlay">
-          <div className="glass-card analysis-loader-content">
-            <span className="loader-spinner">⚙️</span>
-            <h2>Analyzing Contract Risks...</h2>
-            <p>
-              Zaalima AI is sequentially analyzing 16 legal categories in your contract, scoring risk factors, and cross-referencing indices. This usually takes 1-2 minutes.
-            </p>
-            <div className="progress-container">
-              <div className="progress-bar animated" />
+      {/* Unified workspace grid layout */}
+      <div className="dashboard-view">
+        <Sidebar 
+          filename={selectedFilename || 'Contract'} 
+          jobId={selectedJobId || ''} 
+          debugData={debugData} 
+          riskSummary={analysisData?.risk_summary || { overall_risk: 'LOW', total_risk_score: 0, high_risk_flags: 0, medium_risk_flags: 0 }}
+          onBackToUpload={handleBackToUpload}
+          threads={threads}
+          activeThreadId={selectedJobId}
+          onSelectThread={handleSelectThread}
+          onDeleteThread={handleDeleteThread}
+        />
+        
+        <main className="main-content" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {view === 'upload' ? (
+            <div className="glass-card" style={{ maxWidth: '800px', width: '100%', margin: '0 auto' }}>
+              <UploadZone onFilesSelected={handleFilesSelected} />
+              {pendingJobs.length > 0 && <ActiveJobs jobs={pendingJobs} onAnalyze={handleAnalyze} />}
             </div>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '15px', fontFamily: 'monospace' }}>
-              Job ID: {selectedJobId}
-            </p>
-          </div>
-        </div>
-      )}
+          ) : (
+            <Explorer results={analysisData?.extraction_results || {}} />
+          )}
+        </main>
+      </div>
 
       {/* Footer */}
       <footer>

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     vector_size: int = 384  # all-MiniLM-L6-v2
 
     # --- Ollama ---
-    ollama_url: str = Field(default="http://localhost:11434/api/generate")
+    ollama_url: str = Field(default="http://127.0.0.1:11434/api/generate")
     ollama_model: str = "qwen2.5:7b"
     ollama_temperature: float = 0.0
     ollama_max_tokens: int = 1024
