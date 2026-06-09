@@ -1,12 +1,24 @@
 import os
+from pathlib import Path
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"     # Keep PyTorch off GPU — Ollama owns VRAM exclusively
-os.environ["TRANSFORMERS_OFFLINE"] = "1"      # Use cached HF model — skip 30s network checks that race with Ollama's VRAM load
-os.environ["HF_DATASETS_OFFLINE"] = "1"       # Same — prevent huggingface_hub background polling
+
+# Enable offline mode only if the embedding model is already cached to prevent startup errors on first run.
+hf_cache = Path(os.path.expanduser("~/.cache/huggingface/hub"))
+model_cached = hf_cache.exists() and any(hf_cache.glob("*all-MiniLM-L6-v2*"))
+
+if model_cached:
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+else:
+    os.environ["TRANSFORMERS_OFFLINE"] = "0"
+    os.environ["HF_DATASETS_OFFLINE"] = "0"
+
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from api.router import router
 from core.config import settings
 
@@ -69,45 +81,18 @@ app = FastAPI(
 )
 
 
+# Serve static dashboard assets
+app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
 @app.get("/")
 def root():
-        """Serve the browser upload form at the root URL."""
-        return HTMLResponse(
-                content="""
-                <!doctype html>
-                <html lang="en">
-                <head>
-                    <meta charset="utf-8" />
-                    <meta name="viewport" content="width=device-width, initial-scale=1" />
-                    <title>Contract Intelligence Upload</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; background: #f6f8fc; margin: 0; padding: 40px; color: #102030; }
-                        .card { max-width: 720px; margin: 0 auto; background: white; border-radius: 16px; padding: 32px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
-                        h1 { margin-top: 0; }
-                        form { display: grid; gap: 16px; }
-                        input[type=file] { padding: 12px; border: 1px solid #c8d0dc; border-radius: 10px; background: #fff; }
-                        button { padding: 12px 18px; border: 0; border-radius: 10px; background: #0f62fe; color: white; font-weight: 600; cursor: pointer; }
-                        .meta { color: #5a6b7f; font-size: 14px; }
-                        .links a { color: #0f62fe; text-decoration: none; margin-right: 16px; }
-                    </style>
-                </head>
-                <body>
-                    <div class="card">
-                        <h1>Upload documents</h1>
-                        <p class="meta">Upload PDF, DOCX, JPG, JPEG, or PNG files to extract and analyze contract text.</p>
-                        <form action="/upload" method="post" enctype="multipart/form-data">
-                            <input type="file" name="files" multiple accept=".pdf,.docx,.png,.jpg,.jpeg" />
-                            <button type="submit">Upload</button>
-                        </form>
-                        <p class="links">
-                            <a href="/docs">API Docs</a>
-                            <a href="/health">Health Check</a>
-                        </p>
-                    </div>
-                </body>
-                </html>
-                """
-        )
+    """Serve the dashboard index file directly at the root URL."""
+    react_index = Path("frontend/dist/index.html")
+    if react_index.exists():
+        return FileResponse(react_index)
+    return FileResponse("static/index.html")
 
 app.add_middleware(
     CORSMiddleware,

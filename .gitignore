@@ -22,3 +22,7 @@ models/fine_tuned_legal_roberta
 scratch_*
 job_id.txt
 diag_torch_kill.py
+
+# React frontend build and dependencies
+frontend/node_modules/
+frontend/dist/

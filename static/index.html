@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zaalima Contract Intelligence Platform</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo-group">
+                <div class="logo-icon">⚖️</div>
+                <div class="logo-text">
+                    <h1>ZAALIMA</h1>
+                    <p>Contract Intelligence & Risk Platform</p>
+                </div>
+            </div>
+            
+            <div class="health-panel">
+                <div id="healthDot" class="health-dot"></div>
+                <span id="healthLabel" style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 500;">Services: Active</span>
+                <a href="/docs" target="_blank" class="btn-secondary" style="padding: 6px 12px; font-size: 0.8rem; margin-left: 12px;">API Docs</a>
+            </div>
+        </header>
+
+        <!-- Upload & Status View (Initial State) -->
+        <div id="uploadView" class="upload-view">
+            <div class="glass-card">
+                <div id="dropZone" class="upload-zone">
+                    <span class="upload-icon">📥</span>
+                    <h3>Drag & Drop Contract</h3>
+                    <p>Support PDF, DOCX, PNG, JPG, or JPEG (Max 50MB)</p>
+                    <input type="file" id="fileInput" class="file-input" multiple accept=".pdf,.docx,.png,.jpg,.jpeg">
+                    <button type="button" id="browseBtn" class="btn-primary">Browse Files</button>
+                </div>
+                
+                <!-- Upload Queue List -->
+                <div id="jobsSection" class="jobs-section" style="display: none;">
+                    <h2>Active Processing Queue</h2>
+                    <div id="jobsList">
+                        <!-- Job Cards will be injected dynamically by JavaScript -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard Analysis View (Loaded on clicking Analyze) -->
+        <div id="dashboardView" class="dashboard-view">
+            <!-- Left Sidebar (Metadata & Overall Risk) -->
+            <div class="sidebar">
+                <!-- Document metadata card -->
+                <div class="glass-card doc-info-card">
+                    <button type="button" id="backToUploadBtn" class="btn-secondary" style="margin-bottom: 20px; width: 100%;">
+                        ← Upload Another File
+                    </button>
+                    <h2>Document Profile</h2>
+                    <p id="docFilename" class="filename-meta">Loading...</p>
+                    <div class="doc-meta-item">
+                        <span>Job ID</span>
+                        <span id="metaJobId" style="font-family: monospace;">-</span>
+                    </div>
+                    <div class="doc-meta-item">
+                        <span>Parser Strategy</span>
+                        <span id="metaParser">-</span>
+                    </div>
+                    <div class="doc-meta-item">
+                        <span>Chunks Extracted</span>
+                        <span id="metaChunksCount">-</span>
+                    </div>
+                    <div class="doc-meta-item">
+                        <span>Sections Identified</span>
+                        <span id="metaSectionsCount">-</span>
+                    </div>
+                </div>
+
+                <!-- Overall Risk score and summary -->
+                <div class="glass-card risk-meter-card">
+                    <h2>Overall Assessment</h2>
+                    <div id="riskDisplay" class="risk-level-display">LOW</div>
+                    <p id="riskScoreSubtitle" class="risk-score-subtitle">Accumulated Risk Points: 0</p>
+                    
+                    <div class="risk-breakdown-row">
+                        <div class="breakdown-item">
+                            <span id="highRiskCount" class="breakdown-val">0</span>
+                            <span class="breakdown-label">High Risk</span>
+                        </div>
+                        <div class="breakdown-item">
+                            <span id="medRiskCount" class="breakdown-val">0</span>
+                            <span class="breakdown-label">Med Risk</span>
+                        </div>
+                        <div class="breakdown-item">
+                            <span id="analyzedCount" class="breakdown-val">16</span>
+                            <span class="breakdown-label">Categories</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel (Clause Explorer Accordions) -->
+            <div class="explorer-panel">
+                <div class="explorer-header">
+                    <h2>Extracted Legal Categories</h2>
+                    <p style="color: var(--text-muted); font-size: 0.9rem;">Select a category to view the extracted clause and risk details</p>
+                </div>
+                
+                <div id="accordionList" class="accordion-list">
+                    <!-- Accordion Items will be injected here by app.js -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            <p>© 2026 Zaalima Development. Confidential legal audit support agent interface.</p>
+        </footer>
+    </div>
+
+    <!-- Application JavaScript -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
