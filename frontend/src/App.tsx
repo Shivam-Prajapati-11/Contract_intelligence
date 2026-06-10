@@ -405,7 +405,7 @@ export default function App() {
       <Header />
 
       {/* Unified workspace grid layout */}
-      <div className="dashboard-view">
+      <div className="dashboard-view" style={{ flex: 1 }}>
         <Sidebar
           filename={selectedFilename || 'Contract'}
           jobId={selectedJobId || ''}

@@ -728,9 +728,33 @@ header {
 
 .risk-meter-label {
   font-family: 'Outfit', sans-serif;
-  font-size: 1.6rem;
+  font-size: 1.5rem;
   font-weight: 800;
   line-height: 1.1;
+  text-align: center;
+}
+
+.risk-meter-label.color-CRITICAL {
+  font-size: 1.15rem;
+  color: var(--risk-critical);
+}
+
+.risk-meter-label.color-HIGH {
+  font-size: 1.4rem;
+  color: var(--risk-high);
+}
+
+.risk-meter-label.color-MEDIUM {
+  font-size: 1.25rem;
+  color: var(--risk-medium);
+}
+
+.risk-meter-label.color-LOW {
+  color: var(--risk-low);
+}
+
+.risk-meter-label.color-NONE {
+  color: var(--risk-none);
 }
 
 .risk-meter-desc {
@@ -1252,7 +1276,9 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-width: 75%;
+  flex: 1;
+  min-width: 0;
+  padding-right: 8px;
 }
 
 .thread-name {
@@ -1273,6 +1299,7 @@ footer {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .btn-delete-thread {
