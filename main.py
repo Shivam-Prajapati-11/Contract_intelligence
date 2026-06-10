@@ -33,17 +33,27 @@ def ensure_ollama_running():
     import socket
     import subprocess
     import time
+    from urllib.parse import urlparse
 
-    # Check if port is open
+    url = urlparse(settings.ollama_url)
+    host = url.hostname or "127.0.0.1"
+    port = url.port or 11434
+
+    # Check if Ollama port is open
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(1)
     try:
-        s.connect(("127.0.0.1", 11434))
+        s.connect((host, port))
         s.close()
-        logger.info("Ollama is already running.")
+        logger.info(f"Ollama is already running on {host}:{port}.")
         return True
     except socket.error:
         pass
+
+    # Only attempt to start ollama serve locally if host is localhost/127.0.0.1
+    if host not in ("127.0.0.1", "localhost"):
+        logger.warning(f"Ollama is not reachable on {host}:{port}. Cannot start serve automatically for remote hosts.")
+        return False
 
     logger.info("Ollama is not running. Attempting to start 'ollama serve' in background...")
     try:
@@ -68,7 +78,7 @@ def ensure_ollama_running():
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(1)
             try:
-                s.connect(("127.0.0.1", 11434))
+                s.connect((host, port))
                 s.close()
                 logger.info(f"Ollama started successfully after {i+1} seconds.")
                 return True
@@ -140,9 +150,10 @@ app = FastAPI(
 )
 
 
-# Serve static dashboard assets (only if the build directory exists)
-if Path("frontend/dist/assets").exists():
-    app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+# Serve static dashboard assets (ensure build directory exists so it can be mounted)
+dist_assets_path = Path("frontend/dist/assets")
+dist_assets_path.mkdir(parents=True, exist_ok=True)
+app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 

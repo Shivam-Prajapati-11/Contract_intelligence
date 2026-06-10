@@ -213,6 +213,90 @@ header {
   filter: drop-shadow(0 2px 8px rgba(79, 70, 229, 0.25));
 }
 
+/* --- Animated Logo Elements --- */
+.logo-beam {
+  transform-origin: 24px 11px;
+  animation: balanceBeam 4s ease-in-out infinite;
+}
+
+.logo-left-scale {
+  transform-origin: 10px 11px;
+  animation: balanceLeft 4s ease-in-out infinite;
+}
+
+.logo-right-scale {
+  transform-origin: 38px 11px;
+  animation: balanceRight 4s ease-in-out infinite;
+}
+
+.logo-scanner-node {
+  transform-origin: 24px 25px;
+  animation: pulseScanner 2s ease-in-out infinite;
+}
+
+.logo-scan-line {
+  transform-origin: 24px 12px;
+  animation: scanLine 3s ease-in-out infinite;
+  stroke-linecap: round;
+}
+
+@keyframes balanceBeam {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(5deg); }
+}
+
+@keyframes balanceLeft {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-0.6px) rotate(1deg); }
+  50% { transform: translateY(-1.2px) rotate(0deg); }
+  75% { transform: translateY(-0.6px) rotate(-1deg); }
+}
+
+@keyframes balanceRight {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(0.6px) rotate(-1deg); }
+  50% { transform: translateY(1.2px) rotate(0deg); }
+  75% { transform: translateY(0.6px) rotate(1deg); }
+}
+
+@keyframes pulseScanner {
+  0%, 100% {
+    transform: scale(0.95);
+    fill: #06b6d4;
+    opacity: 0.7;
+    filter: drop-shadow(0 0 1px rgba(6, 182, 212, 0.5));
+  }
+  50% {
+    transform: scale(1.4);
+    fill: #d946ef;
+    opacity: 1;
+    filter: drop-shadow(0 0 6px rgba(217, 70, 239, 0.85));
+  }
+}
+
+@keyframes scanLine {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.8;
+    stroke: #06b6d4;
+    filter: drop-shadow(0 0 2px #06b6d4);
+  }
+  50% {
+    transform: translateY(24px);
+    opacity: 0.85;
+    stroke: #d946ef;
+    filter: drop-shadow(0 0 4px #d946ef);
+  }
+  90% {
+    opacity: 0.8;
+    stroke: #06b6d4;
+    filter: drop-shadow(0 0 2px #06b6d4);
+  }
+}
+
 .logo-text h1 {
   font-size: 1.7rem;
   font-weight: 800;

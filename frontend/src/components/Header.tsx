@@ -17,17 +17,24 @@ const LogoIcon: React.FC = () => (
     </defs>
     {/* Base/Pillar */}
     <path d="M22 10V38H18L16 42H32L30 38H26V10H22Z" fill="url(#logoGrad)" />
-    {/* Top Beam */}
-    <path d="M8 10H40V12H8V10Z" fill="url(#logoGrad)" />
+    {/* Top Beam - Animated */}
+    <path className="logo-beam" d="M8 10H40V12H8V10Z" fill="url(#logoGrad)" />
+    {/* Center Pivot Pin */}
     <circle cx="24" cy="11" r="3" fill="url(#logoGrad)" />
-    {/* Left Scale Strings */}
-    <path d="M10 12L6 26M10 12L14 26" stroke="url(#scaleGrad)" strokeWidth="1" />
-    {/* Right Scale Strings */}
-    <path d="M38 12L34 26M38 12L42 26" stroke="url(#scaleGrad)" strokeWidth="1" />
-    {/* Left Scale Bowl */}
-    <path d="M4 26C4 29.3 6.7 32 10 32C13.3 32 16 29.3 16 26H4Z" fill="url(#scaleGrad)" opacity="0.9" />
-    {/* Right Scale Bowl */}
-    <path d="M32 26C32 29.3 34.7 32 38 32C41.3 32 44 29.3 44 26H32Z" fill="url(#scaleGrad)" opacity="0.9" />
+    {/* Left Scale Assembly - Animated */}
+    <g className="logo-left-scale">
+      <path d="M10 12L6 26M10 12L14 26" stroke="url(#scaleGrad)" strokeWidth="1" />
+      <path d="M4 26C4 29.3 6.7 32 10 32C13.3 32 16 29.3 16 26H4Z" fill="url(#scaleGrad)" opacity="0.9" />
+    </g>
+    {/* Right Scale Assembly - Animated */}
+    <g className="logo-right-scale">
+      <path d="M38 12L34 26M38 12L42 26" stroke="url(#scaleGrad)" strokeWidth="1" />
+      <path d="M32 26C32 29.3 34.7 32 38 32C41.3 32 44 29.3 44 26H32Z" fill="url(#scaleGrad)" opacity="0.9" />
+    </g>
+    {/* Pulsing AI Scanner Core Node (Contract Intelligence / Analysis symbol) */}
+    <circle className="logo-scanner-node" cx="24" cy="25" r="2.5" fill="#06b6d4" />
+    {/* Sweeping AI Laser Scan Line */}
+    <line className="logo-scan-line" x1="4" y1="12" x2="44" y2="12" stroke="#06b6d4" strokeWidth="1.5" />
   </svg>
 );
 
@@ -100,7 +107,7 @@ export const Header: React.FC = () => {
       <div className="logo-group">
         <LogoIcon />
         <div className="logo-text">
-          <h1>ZAALIMA</h1>
+          <h1>ClauseForge</h1>
           <p>Contract Intelligence & Risk Platform</p>
         </div>
       </div>
