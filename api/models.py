@@ -62,3 +62,9 @@ class ErrorResponse(BaseModel):
     """Standard error response."""
     error: str
     detail: Optional[str] = None
+
+
+class ChatRequest(BaseModel):
+    """Request model for chatting with the contract."""
+    message: str
+    history: list[dict[str, str]] = []

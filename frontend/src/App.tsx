@@ -4,6 +4,8 @@ import { UploadZone } from './components/UploadZone';
 import { ActiveJobs, Job } from './components/ActiveJobs';
 import { Sidebar } from './components/Sidebar';
 import { Explorer } from './components/Explorer';
+import { ChatBox } from './components/ChatBox';
+import { Bot } from 'lucide-react';
 import { API_BASE_URL } from './config';
 
 export default function App() {
@@ -11,6 +13,7 @@ export default function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [selectedFilename, setSelectedFilename] = useState<string | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [debugData, setDebugData] = useState<any>({ total_chunks: '-', sections: [] });
@@ -429,6 +432,21 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Floating Chat Button & Window */}
+      {view === 'dashboard' && selectedJobId && !isChatOpen && (
+        <button 
+          className="floating-chat-btn" 
+          onClick={() => setIsChatOpen(true)}
+          title="Chat with Contract"
+        >
+          <Bot size={24} className="floating-bot-icon" />
+        </button>
+      )}
+
+      {isChatOpen && selectedJobId && (
+        <ChatBox jobId={selectedJobId} onClose={() => setIsChatOpen(false)} />
+      )}
 
       {/* Footer */}
       <footer style={{ marginTop: '40px', padding: '20px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
