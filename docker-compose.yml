@@ -25,12 +25,14 @@ services:
     container_name: contract_api_server
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
-      - EMBEDDING_DEVICE=cpu
-      - OCR_USE_GPU=false
+      - REDIS_URL=${REDIS_URL}
+      - QDRANT_URL=${QDRANT_URL}
+      - OLLAMA_URL=${OLLAMA_URL}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE}
+      - OCR_USE_GPU=${OCR_USE_GPU}
     volumes:
       - ./data/uploads:/app/data/uploads
     depends_on:
@@ -45,12 +47,14 @@ services:
     build: .
     container_name: contract_celery_worker
     command: celery -A core.celery_app worker --loglevel=info --pool=solo
+    env_file:
+      - .env
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
-      - EMBEDDING_DEVICE=cpu
-      - OCR_USE_GPU=false
+      - REDIS_URL=${REDIS_URL}
+      - QDRANT_URL=${QDRANT_URL}
+      - OLLAMA_URL=${OLLAMA_URL}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE}
+      - OCR_USE_GPU=${OCR_USE_GPU}
     volumes:
       - ./data/uploads:/app/data/uploads
     depends_on:
