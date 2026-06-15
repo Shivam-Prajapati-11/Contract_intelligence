@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ── Redis (Message Broker & Cache) ──
   redis:
@@ -19,6 +17,16 @@ services:
       - qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
+  # ── Ollama LLM Engine ──
+  ollama:
+    image: ollama/ollama:latest
+    container_name: contract_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    restart: unless-stopped
+
   # ── FastAPI Web Application ──
   web:
     build: .
@@ -28,9 +36,9 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_URL=${REDIS_URL}
-      - QDRANT_URL=${QDRANT_URL}
-      - OLLAMA_URL=${OLLAMA_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_URL=http://ollama:11434/api/generate
       - EMBEDDING_DEVICE=${EMBEDDING_DEVICE}
       - OCR_USE_GPU=${OCR_USE_GPU}
     volumes:
@@ -38,6 +46,7 @@ services:
     depends_on:
       - redis
       - qdrant
+      - ollama
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -50,9 +59,9 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_URL=${REDIS_URL}
-      - QDRANT_URL=${QDRANT_URL}
-      - OLLAMA_URL=${OLLAMA_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_URL=http://ollama:11434/api/generate
       - EMBEDDING_DEVICE=${EMBEDDING_DEVICE}
       - OCR_USE_GPU=${OCR_USE_GPU}
     volumes:
@@ -60,9 +69,11 @@ services:
     depends_on:
       - redis
       - qdrant
+      - ollama
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 volumes:
   qdrant_storage:
+  ollama_storage:

@@ -9,20 +9,26 @@ logger = logging.getLogger(__name__)
 
 _embedding_model = None
 
+def _get_sbert_device() -> str:
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
 def get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         try:
             from sentence_transformers import SentenceTransformer
-            from core.config import settings
-            logger.info(f"Initializing SentenceTransformer lazily on device={settings.embedding_device}...")
-            device = settings.embedding_device if settings.embedding_device != "auto" else None
+            device = _get_sbert_device()
+            logger.info("Initializing SentenceTransformer lazily on device=%s...", device)
             _embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
         except Exception as e:
             logger.error(f"Error loading embedding model: {e}")
     return _embedding_model
 
-# TODO: Review lazy model loading behavior and add caching fallback if needed.
 def run_ocr_pipeline(filepath, job_id=None):
     """
     Full document processing pipeline:
