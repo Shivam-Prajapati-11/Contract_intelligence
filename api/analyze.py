@@ -448,7 +448,7 @@ ANSWER:"""
                 return "NOT_FOUND"
 
 
-async def _query_ollama_individual_stream(question: str, context: str, category: str, max_retries: int = 3, retry_delay: float = 5.0):
+async def _query_ollama_individual_stream(question: str, context: str, category: str, max_retries: int = 3, retry_delay: float = 5.0, history: list = None):
     """Call Ollama with streaming enabled and retry logic, yielding text chunks in real-time."""
     import httpx
     import json
@@ -468,7 +468,28 @@ async def _query_ollama_individual_stream(question: str, context: str, category:
             "Termination for Convenience clause. Do not return NOT_FOUND if such a termination clause is present."
         )
 
-    prompt = f"""You are a professional legal contract analyst. Extract the answer to the question below from the contract text.
+    if category == "Chat":
+        history_text = ""
+        if history:
+            history_text = "\nPREVIOUS CONVERSATION HISTORY:\n"
+            for msg in history:
+                role_name = "User" if msg.get("role") == "user" else "AI"
+                history_text += f"{role_name}: {msg.get('text', '')}\n"
+            history_text += "\n"
+
+        prompt = f"""You are a helpful, professional legal contract analyst assisting a user. 
+
+If the user is just saying hello or greeting you, respond politely and ask how you can help them analyze the contract. Do not mention the contract text for simple greetings.
+Otherwise, answer the user's question based ONLY on the provided contract text. 
+If the information is not present in the text, clearly state that you could not find the information in the contract. Do NOT make up an answer.
+{history_text}
+QUESTION: {question}
+
+CONTRACT TEXT:
+{context}
+"""
+    else:
+        prompt = f"""You are a professional legal contract analyst. Extract the answer to the question below from the contract text.
 If the information is genuinely not present in the text, respond with exactly: NOT_FOUND.
 {hint_block}
 Think step by step: first identify the relevant clauses or sections, then extract the specific answer.
@@ -911,3 +932,51 @@ def debug_chunks(job_id: str):
         "sections": list(set(c["section_title"] for c in chunks)),
         "chunks": chunks,
     }
+
+
+from api.models import ChatRequest
+
+@router.post("/analyze/chat/{job_id}")
+async def chat_contract_stream(job_id: str, request: ChatRequest):
+    """
+    Endpoint for custom 'Chat with the Contract' feature.
+    Uses SSE to stream the AI response token-by-token.
+    """
+    import json
+    import api.models
+    from fastapi.responses import StreamingResponse
+    
+    async def event_generator():
+        try:
+            question = request.message
+            logger.info(f"[CHAT STREAM] User asked: {question}")
+            
+            chunks = search_chunks(job_id=job_id, query=question, top_k=8)
+            chunks.sort(key=lambda x: x.get("chunk_index", 0))
+            
+            context_parts = []
+            for c in chunks:
+                sec = c.get("section_title", "")
+                txt = c.get("text", "")
+                if sec:
+                    context_parts.append(f"[Section: {sec}]\n{txt}")
+                else:
+                    context_parts.append(txt)
+                    
+            context = "\n\n---\n\n".join(context_parts)
+            
+            if len(context) > settings.max_context_chars:
+                context = context[:settings.max_context_chars]
+
+            yield f"data: {json.dumps({'status': 'start'})}\n\n"
+            
+            async for text_chunk in _query_ollama_individual_stream(question, context, "Chat", history=request.history):
+                yield f"data: {json.dumps({'status': 'chunk', 'text': text_chunk})}\n\n"
+                
+            yield f"data: {json.dumps({'status': 'done'})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"[CHAT STREAM] Error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
