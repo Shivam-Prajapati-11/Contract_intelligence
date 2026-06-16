@@ -120,11 +120,11 @@ def search_chunks(job_id: str, query: str, top_k: int = 10) -> list[dict]:
                 "score": hit.score if hasattr(hit, 'score') else 0,
             })
         
-        logger.warning(f"[SEARCH] job_id={job_id} | query='{query[:50]}...' | found {len(chunks)} chunks")
+        logger.debug(f"[SEARCH] job_id={job_id} | query='{query[:50]}...' | found {len(chunks)} chunks")
         if chunks:
-            logger.warning(f"[SEARCH] Top chunk (section='{chunks[0]['section_title']}'): {chunks[0]['text'][:100]}...")
+            logger.debug(f"[SEARCH] Top chunk (section='{chunks[0]['section_title']}'): {chunks[0]['text'][:100]}...")
         else:
-            logger.warning(f"[SEARCH] NO CHUNKS FOUND for job_id={job_id}")
+            logger.info(f"[SEARCH] NO CHUNKS FOUND for job_id={job_id}")
         
         return chunks
     except Exception as e:
