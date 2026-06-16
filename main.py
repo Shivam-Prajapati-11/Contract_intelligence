@@ -205,23 +205,17 @@ def health_check():
     except Exception:
         services["qdrant"] = "unhealthy"
     
-    # Check Ollama via the configured service URL
+    # Check Ollama
     try:
         import requests
-        from urllib.parse import urlparse, urlunparse
-
-        parsed = urlparse(settings.ollama_url)
-        health_path = "/api/tags"
-        health_url = urlunparse(parsed._replace(path=health_path, query="", fragment=""))
-
-        resp = requests.get(health_url, timeout=3)
+        resp = requests.get("http://localhost:11434/api/tags", timeout=3)
         if resp.status_code == 200:
             services["ollama"] = "healthy"
         else:
             services["ollama"] = "unhealthy"
     except Exception:
         services["ollama"] = "unhealthy"
-
+    
     overall = "healthy" if all(v == "healthy" for v in services.values()) else "degraded"
     
     return {

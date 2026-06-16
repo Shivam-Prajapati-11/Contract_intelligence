@@ -188,3 +188,66 @@ def get_all_chunks(job_id: str) -> list[dict]:
     except Exception as e:
         logger.warning(f"Could not retrieve ordered chunks: {e}")
         return []
+
+
+def keyword_search_chunks(job_id: str, keywords: list[str], limit: int = 10) -> list[dict]:
+    """
+    Retrieve chunks for a given job_id that match any of the provided keywords.
+    Uses Qdrant scroll + in-memory keyword matching (since Qdrant's full-text filter
+    requires a payload index, this approach is simpler and more portable).
+    
+    Returns up to `limit` chunks sorted by keyword match density (most matches first).
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    
+    try:
+        query_filter = Filter(
+            must=[FieldCondition(key="job_id", match=MatchValue(value=job_id))]
+        )
+        
+        all_points = []
+        offset = None
+        
+        while True:
+            results, next_offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=query_filter,
+                limit=100,
+                offset=offset,
+            )
+            all_points.extend(results)
+            
+            if next_offset is None:
+                break
+            offset = next_offset
+        
+        scored_chunks = []
+        for point in all_points:
+            text = (point.payload.get("text", "") or "").lower()
+            score = 0
+            for kw in keywords:
+                kw_lower = kw.lower()
+                count = text.count(kw_lower)
+                score += count
+            
+            if score > 0:
+                scored_chunks.append({
+                    "text": point.payload.get("text", ""),
+                    "section_title": point.payload.get("section_title", ""),
+                    "chunk_index": point.payload.get("chunk_index", 0),
+                    "score": score,
+                })
+        
+        # Sort by keyword match count descending, then by chunk_index ascending
+        scored_chunks.sort(key=lambda x: (-x["score"], x["chunk_index"]))
+        
+        # Return only top `limit` results without the internal score
+        result = scored_chunks[:limit]
+        for chunk in result:
+            chunk.pop("score", None)
+        
+        logger.info(f"Keyword search: job_id={job_id} | keywords={keywords} | found {len(result)} matching chunks")
+        return result
+    except Exception as e:
+        logger.warning(f"Could not perform keyword search: {e}")
+        return []
