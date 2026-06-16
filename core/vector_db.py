@@ -3,8 +3,6 @@ import logging
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance
 
-from core.config import settings
-
 logger = logging.getLogger(__name__)
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -12,6 +10,14 @@ COLLECTION_NAME = "contracts"
 VECTOR_SIZE = 384  # all-MiniLM-L6-v2
 
 client = QdrantClient(url=QDRANT_URL)
+
+def _get_sbert_device() -> str:
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
 
 def init_db():
     if not client.collection_exists(collection_name=COLLECTION_NAME):
@@ -23,10 +29,7 @@ def init_db():
     else:
         logger.info(f"Qdrant collection {COLLECTION_NAME} already exists.")
 
-try:
-    init_db()
-except Exception as _e:
-    logger.warning(f"Qdrant not ready at startup (will retry on first use): {_e}")
+init_db()
 
 
 def insert_chunks(chunks_with_embeddings: list[dict], metadata: dict):
@@ -70,36 +73,35 @@ def _get_search_model():
     global _search_model
     if _search_model is None:
         from sentence_transformers import SentenceTransformer
-        import torch
-        device = settings.embedding_device
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Initializing search SentenceTransformer on device={device}...")
+        device = _get_sbert_device()
+        logger.info("Initializing SentenceTransformer search model lazily on device=%s...", device)
         _search_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
     return _search_model
 
 
-def search_chunks(job_id: str, query: str, top_k: int | None = None) -> list[dict]:
+def search_chunks(job_id: str, query: str, top_k: int = 10) -> list[dict]:
     """
     Embeds the query and searches Qdrant for the most relevant chunks.
     Returns list of dicts with text, section_title, chunk_index, and score.
     """
     from qdrant_client.models import Filter, FieldCondition, MatchValue
-
-    if top_k is None:
-        top_k = settings.search_top_k
-
+    
     model = _get_search_model()
     if model is None:
         logger.error("Embedding model not available for search")
         return []
-
+        
     query_vector = model.encode(query).tolist()
-
+    
     query_filter = Filter(
-        must=[FieldCondition(key="job_id", match=MatchValue(value=job_id))]
+        must=[
+            FieldCondition(
+                key="job_id",
+                match=MatchValue(value=job_id)
+            )
+        ]
     )
-
+    
     try:
         results = client.query_points(
             collection_name=COLLECTION_NAME,
@@ -108,7 +110,7 @@ def search_chunks(job_id: str, query: str, top_k: int | None = None) -> list[dic
             limit=top_k,
             with_payload=True,
         )
-
+        
         chunks = []
         for hit in results.points:
             chunks.append({
@@ -117,35 +119,17 @@ def search_chunks(job_id: str, query: str, top_k: int | None = None) -> list[dic
                 "chunk_index": hit.payload.get("chunk_index", 0),
                 "score": hit.score if hasattr(hit, 'score') else 0,
             })
-
-        logger.info(f"[SEARCH] query='{query[:50]}...' | found {len(chunks)} chunks")
+        
+        logger.debug(f"[SEARCH] job_id={job_id} | query='{query[:50]}...' | found {len(chunks)} chunks")
+        if chunks:
+            logger.debug(f"[SEARCH] Top chunk (section='{chunks[0]['section_title']}'): {chunks[0]['text'][:100]}...")
+        else:
+            logger.info(f"[SEARCH] NO CHUNKS FOUND for job_id={job_id}")
+        
         return chunks
     except Exception as e:
         logger.error(f"Error searching Qdrant: {e}")
         return []
-
-
-def keyword_search_chunks(job_id: str, keywords: list[str], limit: int = 20) -> list[dict]:
-    """
-    Keyword-based search: retrieves all chunks for a job_id and filters
-    by keyword presence in text or section_title. Catches cases where
-    vector similarity fails (e.g., 'hold harmless' vs 'indemnification').
-    """
-    all_chunks = get_all_chunks(job_id)
-    if not all_chunks or not keywords:
-        return []
-
-    matched = []
-    for chunk in all_chunks:
-        text_lower = chunk["text"].lower()
-        title_lower = chunk.get("section_title", "").lower()
-        combined = text_lower + " " + title_lower
-
-        if any(kw.lower() in combined for kw in keywords):
-            matched.append(chunk)
-
-    logger.info(f"[KEYWORD] keywords={keywords[:3]} | matched {len(matched)} chunks")
-    return matched[:limit]
 
 
 def get_chunks_by_order(job_id: str, limit: int = 10) -> list[dict]:
@@ -203,4 +187,67 @@ def get_all_chunks(job_id: str) -> list[dict]:
         return chunks
     except Exception as e:
         logger.warning(f"Could not retrieve ordered chunks: {e}")
+        return []
+
+
+def keyword_search_chunks(job_id: str, keywords: list[str], limit: int = 10) -> list[dict]:
+    """
+    Retrieve chunks for a given job_id that match any of the provided keywords.
+    Uses Qdrant scroll + in-memory keyword matching (since Qdrant's full-text filter
+    requires a payload index, this approach is simpler and more portable).
+    
+    Returns up to `limit` chunks sorted by keyword match density (most matches first).
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    
+    try:
+        query_filter = Filter(
+            must=[FieldCondition(key="job_id", match=MatchValue(value=job_id))]
+        )
+        
+        all_points = []
+        offset = None
+        
+        while True:
+            results, next_offset = client.scroll(
+                collection_name=COLLECTION_NAME,
+                scroll_filter=query_filter,
+                limit=100,
+                offset=offset,
+            )
+            all_points.extend(results)
+            
+            if next_offset is None:
+                break
+            offset = next_offset
+        
+        scored_chunks = []
+        for point in all_points:
+            text = (point.payload.get("text", "") or "").lower()
+            score = 0
+            for kw in keywords:
+                kw_lower = kw.lower()
+                count = text.count(kw_lower)
+                score += count
+            
+            if score > 0:
+                scored_chunks.append({
+                    "text": point.payload.get("text", ""),
+                    "section_title": point.payload.get("section_title", ""),
+                    "chunk_index": point.payload.get("chunk_index", 0),
+                    "score": score,
+                })
+        
+        # Sort by keyword match count descending, then by chunk_index ascending
+        scored_chunks.sort(key=lambda x: (-x["score"], x["chunk_index"]))
+        
+        # Return only top `limit` results without the internal score
+        result = scored_chunks[:limit]
+        for chunk in result:
+            chunk.pop("score", None)
+        
+        logger.info(f"Keyword search: job_id={job_id} | keywords={keywords} | found {len(result)} matching chunks")
+        return result
+    except Exception as e:
+        logger.warning(f"Could not perform keyword search: {e}")
         return []

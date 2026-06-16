@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ── Redis (Message Broker & Cache) ──
   redis:
@@ -31,8 +29,8 @@ services:
       - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
       - QDRANT_URL=${QDRANT_URL:?QDRANT_URL is required}
       - OLLAMA_URL=${OLLAMA_URL:?OLLAMA_URL is required}
-      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:?EMBEDDING_DEVICE is required}
-      - OCR_USE_GPU=${OCR_USE_GPU:?OCR_USE_GPU is required}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE}
+      - OCR_USE_GPU=${OCR_USE_GPU}
     volumes:
       - ./data/uploads:/app/data/uploads
     depends_on:

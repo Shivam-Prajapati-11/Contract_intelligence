@@ -24,9 +24,8 @@ RUN pip install --no-cache-dir uv
 # Copy dependency configuration files
 COPY pyproject.toml uv.lock ./
 
-# Install python dependencies globally using uv
-# Use --system because we don't need a virtualenv inside a container
-RUN uv pip install --system --no-cache -r pyproject.toml
+# Install python dependencies globally using uv from the project's lockfile
+RUN uv sync --system --no-cache --no-progress
 
 # Copy project files
 COPY . .
