@@ -26,9 +26,9 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_URL=${REDIS_URL}
-      - QDRANT_URL=${QDRANT_URL}
-      - OLLAMA_URL=${OLLAMA_URL}
+      - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
+      - QDRANT_URL=${QDRANT_URL:?QDRANT_URL is required}
+      - OLLAMA_URL=${OLLAMA_URL:?OLLAMA_URL is required}
       - EMBEDDING_DEVICE=${EMBEDDING_DEVICE}
       - OCR_USE_GPU=${OCR_USE_GPU}
     volumes:
