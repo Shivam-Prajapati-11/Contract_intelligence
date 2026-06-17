@@ -20,16 +20,24 @@ def _get_sbert_device() -> str:
 
 
 def init_db():
-    if not client.collection_exists(collection_name=COLLECTION_NAME):
-        client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-        )
-        logger.info(f"Created Qdrant collection: {COLLECTION_NAME}")
-    else:
-        logger.info(f"Qdrant collection {COLLECTION_NAME} already exists.")
+    try:
+        if not client.collection_exists(collection_name=COLLECTION_NAME):
+            client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+            )
+            logger.info(f"Created Qdrant collection: {COLLECTION_NAME}")
+        else:
+            logger.info(f"Qdrant collection {COLLECTION_NAME} already exists.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Qdrant collection: {e}")
+        raise
 
-init_db()
+try:
+    init_db()
+except Exception as e:
+    logger.critical(f"Could not initialize vector database. Exiting: {e}")
+    raise SystemExit(1)
 
 
 def insert_chunks(chunks_with_embeddings: list[dict], metadata: dict):
