@@ -38,7 +38,7 @@ services:
           property: connectionString
       # --- Qdrant (local mode on disk) ---
       - key: QDRANT_URL
-        value: ""  # Empty = use local Qdrant client (in-memory mode)
+        value: ""
       - key: QDRANT_LOCAL_PATH
         value: /var/data/qdrant
       # --- Hardware settings ---
@@ -53,3 +53,4 @@ services:
     name: contract-redis
     plan: free
     maxmemoryPolicy: noeviction
+    ipAllowList: []  # Allow only internal connections from other Render services
