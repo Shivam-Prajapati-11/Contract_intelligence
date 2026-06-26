@@ -13,7 +13,7 @@ jobs:
       - name: Ping Render backend
         run: |
           curl -s -o /dev/null -w "Status: %{http_code}\n" \
-            https://contract-intelligence-api.onrender.com/health
+            https://contract-intelligence-api-uuse.onrender.com/health
       - name: Ping Render frontend
         run: |
           curl -s -o /dev/null -w "Status: %{http_code}\n" \
