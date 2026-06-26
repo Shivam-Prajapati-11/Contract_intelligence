@@ -89,10 +89,11 @@ class HFInferenceEmbeddingModel:
     def __init__(self):
         self.local_model = None
         self.use_api = True
-        self.hf_token = os.getenv("HF_TOKEN") or os.getenv("LLM_API_KEY")
+        self.hf_token = os.getenv("HF_TOKEN")
 
     def encode(self, texts, show_progress_bar=False):
         import numpy as np
+        import time
         if isinstance(texts, str):
             single = True
             texts = [texts]
@@ -107,22 +108,38 @@ class HFInferenceEmbeddingModel:
                     headers["Authorization"] = f"Bearer {self.hf_token}"
                 
                 logger.info(f"Generating embedding via HF Inference API for {len(texts)} texts...")
-                response = requests.post(
-                    "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
-                    json={"inputs": texts},
-                    headers=headers,
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    embeddings = response.json()
-                    if isinstance(embeddings, list) and len(embeddings) > 0:
-                        if isinstance(embeddings[0], float):
-                            embeddings = [embeddings]
-                        logger.info("Successfully fetched embedding from HF Inference API.")
-                        if single:
-                            return np.array(embeddings[0])
-                        return np.array(embeddings)
-                logger.warning(f"HF Inference API returned status {response.status_code}: {response.text}. Falling back to local model.")
+                
+                max_hf_retries = 5
+                response = None
+                for hf_attempt in range(max_hf_retries):
+                    response = requests.post(
+                        "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
+                        json={"inputs": texts},
+                        headers=headers,
+                        timeout=15
+                    )
+                    if response.status_code == 200:
+                        embeddings = response.json()
+                        if isinstance(embeddings, list) and len(embeddings) > 0:
+                            if isinstance(embeddings[0], float):
+                                embeddings = [embeddings]
+                            logger.info("Successfully fetched embedding from HF Inference API.")
+                            if single:
+                                return np.array(embeddings[0])
+                            return np.array(embeddings)
+                    elif response.status_code == 503:
+                        try:
+                            err_data = response.json()
+                            est_time = err_data.get("estimated_time", 5.0)
+                        except Exception:
+                            est_time = 5.0
+                        logger.info(f"HF model is loading. Waiting {est_time}s before retry (attempt {hf_attempt+1}/{max_hf_retries})...")
+                        time.sleep(min(est_time, 10.0))
+                    else:
+                        break
+                        
+                if response:
+                    logger.warning(f"HF Inference API returned status {response.status_code}: {response.text}. Falling back to local model.")
             except Exception as e:
                 logger.warning(f"HF Inference API failed: {e}. Falling back to local model.")
             
