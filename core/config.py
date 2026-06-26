@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # --- Groq API Settings (free tier) ---
     # Get your free API key at https://console.groq.com
     llm_api_key: str = Field(default="", description="Groq API key")
-    llm_model: str = Field(default="llama3-70b-8192", description="Groq model name")
+    llm_model: str = Field(default="llama-3.3-70b-versatile", description="Groq model name")
     llm_temperature: float = 0.0
     llm_max_tokens: int = 1024
     llm_timeout: int = 150
