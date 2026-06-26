@@ -141,6 +141,9 @@ async def lifespan(app: FastAPI):
 
 async def _preload_embeddings():
     """Pre-load embedding model in the background so it doesn't block startup."""
+    if on_render:
+        logger.info("Running on Render — skipping SentenceTransformer pre-load to conserve memory.")
+        return
     import asyncio
     try:
         import torch
