@@ -58,18 +58,22 @@ async def upload_files(files: List[UploadFile] = File(...)):
         path = save_file(content, filename)
         file_paths.append(path)
 
-    redis_client.delete(f"job:{job_id}:results")
+    if redis_client:
+        redis_client.delete(f"job:{job_id}:results")
 
     original_filenames = [f.filename for f in files]
 
-    redis_client.hset(
-        f"job:{job_id}",
-        mapping={
-            "status": "processing",
-            "total_files": len(file_paths),
-            "filenames": ",".join(original_filenames),
-        }
-    )
+    if redis_client:
+        redis_client.hset(
+            f"job:{job_id}",
+            mapping={
+                "status": "processing",
+                "total_files": len(file_paths),
+                "filenames": ",".join(original_filenames),
+            }
+        )
+    else:
+        logger.warning("Redis not available — skipping job metadata storage")
 
     # Lazy import: prevents PaddleOCR/torch from loading in the FastAPI process at startup.
     # The Celery task is only dispatched here (not executed), so this import is safe.

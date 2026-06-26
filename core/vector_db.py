@@ -6,10 +6,20 @@ from qdrant_client.models import VectorParams, Distance
 logger = logging.getLogger(__name__)
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_LOCAL_PATH = os.getenv("QDRANT_LOCAL_PATH", "")
 COLLECTION_NAME = "contracts"
 VECTOR_SIZE = 384  # all-MiniLM-L6-v2
 
-client = QdrantClient(url=QDRANT_URL)
+if QDRANT_URL:
+    logger.info(f"Connecting to Qdrant at {QDRANT_URL}")
+    client = QdrantClient(url=QDRANT_URL)
+elif QDRANT_LOCAL_PATH:
+    logger.info(f"Using local Qdrant storage at {QDRANT_LOCAL_PATH}")
+    os.makedirs(QDRANT_LOCAL_PATH, exist_ok=True)
+    client = QdrantClient(path=QDRANT_LOCAL_PATH)
+else:
+    logger.info("Using in-memory Qdrant (data lost on restart)")
+    client = QdrantClient(":memory:")
 
 def _get_sbert_device() -> str:
     try:
