@@ -85,11 +85,21 @@ def insert_chunks(chunks_with_embeddings: list[dict], metadata: dict):
     return True
 
 
+def _log_error_to_redis(err_msg: str):
+    try:
+        from core.redis_client import redis_client
+        if redis_client:
+            redis_client.set("hf_api_error", err_msg)
+    except Exception:
+        pass
+
+
 class HFInferenceEmbeddingModel:
     def __init__(self):
         self.local_model = None
         self.use_api = True
         self.hf_token = os.getenv("HF_TOKEN")
+        self.fallback_to_local = not os.getenv("RENDER")
 
     def encode(self, texts, show_progress_bar=False):
         import numpy as np
@@ -139,11 +149,18 @@ class HFInferenceEmbeddingModel:
                         break
                         
                 if response:
-                    logger.warning(f"HF Inference API returned status {response.status_code}: {response.text}. Falling back to local model.")
+                    err_msg = f"HF Inference API returned status {response.status_code}: {response.text}"
+                    logger.warning(err_msg)
+                    _log_error_to_redis(err_msg)
             except Exception as e:
-                logger.warning(f"HF Inference API failed: {e}. Falling back to local model.")
+                err_msg = f"HF Inference API failed: {e}"
+                logger.warning(err_msg)
+                _log_error_to_redis(err_msg)
             
         if self.local_model is None:
+            if not self.fallback_to_local:
+                logger.error("HF Inference API failed and local fallback is disabled on Render to prevent OOM. Returning None.")
+                return None
             logger.info("Loading local SentenceTransformer model...")
             from sentence_transformers import SentenceTransformer
             device = _get_sbert_device()
@@ -175,7 +192,15 @@ def search_chunks(job_id: str, query: str, top_k: int = 10) -> list[dict]:
         logger.error("Embedding model not available for search")
         return []
         
-    query_vector = model.encode(query).tolist()
+    try:
+        query_vector = model.encode(query)
+        if query_vector is None:
+            logger.warning("Embedding failed, falling back to keyword search")
+            return keyword_search_chunks(job_id=job_id, keywords=query.split(), limit=top_k)
+        query_vector = query_vector.tolist()
+    except Exception as e:
+        logger.error(f"Embedding encoding failed: {e}, falling back to keyword search")
+        return keyword_search_chunks(job_id=job_id, keywords=query.split(), limit=top_k)
     
     query_filter = Filter(
         must=[
