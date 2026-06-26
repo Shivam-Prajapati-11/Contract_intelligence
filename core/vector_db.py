@@ -85,15 +85,64 @@ def insert_chunks(chunks_with_embeddings: list[dict], metadata: dict):
     return True
 
 
+class HFInferenceEmbeddingModel:
+    def __init__(self):
+        self.local_model = None
+        self.use_api = True
+        self.hf_token = os.getenv("HF_TOKEN") or os.getenv("LLM_API_KEY")
+
+    def encode(self, texts, show_progress_bar=False):
+        import numpy as np
+        if isinstance(texts, str):
+            single = True
+            texts = [texts]
+        else:
+            single = False
+
+        if self.use_api:
+            try:
+                import requests
+                headers = {}
+                if self.hf_token and self.hf_token.startswith("hf_"):
+                    headers["Authorization"] = f"Bearer {self.hf_token}"
+                
+                logger.info(f"Generating embedding via HF Inference API for {len(texts)} texts...")
+                response = requests.post(
+                    "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
+                    json={"inputs": texts},
+                    headers=headers,
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    embeddings = response.json()
+                    if isinstance(embeddings, list) and len(embeddings) > 0:
+                        if isinstance(embeddings[0], float):
+                            embeddings = [embeddings]
+                        logger.info("Successfully fetched embedding from HF Inference API.")
+                        if single:
+                            return np.array(embeddings[0])
+                        return np.array(embeddings)
+                logger.warning(f"HF Inference API returned status {response.status_code}: {response.text}. Falling back to local model.")
+            except Exception as e:
+                logger.warning(f"HF Inference API failed: {e}. Falling back to local model.")
+            
+        if self.local_model is None:
+            logger.info("Loading local SentenceTransformer model...")
+            from sentence_transformers import SentenceTransformer
+            device = _get_sbert_device()
+            self.local_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+            
+        embeddings = self.local_model.encode(texts, show_progress_bar=show_progress_bar)
+        if single:
+            return embeddings[0] if hasattr(embeddings, '__len__') else embeddings
+        return embeddings
+
 _search_model = None
 
 def _get_search_model():
     global _search_model
     if _search_model is None:
-        from sentence_transformers import SentenceTransformer
-        device = _get_sbert_device()
-        logger.info("Initializing SentenceTransformer search model lazily on device=%s...", device)
-        _search_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+        _search_model = HFInferenceEmbeddingModel()
     return _search_model
 
 
