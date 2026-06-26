@@ -1,0 +1,20 @@
+name: Keep Render Backend Alive
+
+on:
+  schedule:
+    # Runs every 12 days at midnight UTC — prevents Render free tier suspension
+    - cron: '0 0 */12 * *'
+  workflow_dispatch: # Allows manual trigger too
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render backend
+        run: |
+          curl -s -o /dev/null -w "Status: %{http_code}\n" \
+            https://contract-intelligence-api.onrender.com/health
+      - name: Ping Render frontend
+        run: |
+          curl -s -o /dev/null -w "Status: %{http_code}\n" \
+            https://shivam-prajapati-11.github.io/Contract_intelligence/
