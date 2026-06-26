@@ -6,4 +6,4 @@ const isProduction = window.location.hostname !== 'localhost' && window.location
 
 export const API_BASE_URL = isProduction
   ? (import.meta.env.VITE_API_BASE_URL || 'https://contract-intelligence-api-uuse.onrender.com')
-  : 'http://127.0.0.1:8000';
+  : 'http://127.0.0.1:8000';
