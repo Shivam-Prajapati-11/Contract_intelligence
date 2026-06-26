@@ -112,18 +112,8 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Qdrant: {settings.qdrant_url}")
 
-    # Pre-load the SentenceTransformer on CPU
-    try:
-        import torch
-        device = settings.embedding_device
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Pre-loading SentenceTransformer embedding model on device={device}...")
-        from core.vector_db import _get_search_model
-        await asyncio.to_thread(_get_search_model)
-        logger.info("SentenceTransformer ready.")
-    except Exception as e:
-        logger.warning(f"Embedding model pre-load failed (non-fatal): {e}")
+    # Pre-load embeddings lazily — download/fail in background, don't block startup
+    asyncio.create_task(_preload_embeddings())
 
     # Warm up Ollama only when using local provider
     if settings.llm_provider == "ollama":
@@ -147,6 +137,22 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("Shutting down...")
+
+
+async def _preload_embeddings():
+    """Pre-load embedding model in the background so it doesn't block startup."""
+    import asyncio
+    try:
+        import torch
+        device = settings.embedding_device
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Pre-loading SentenceTransformer embedding model on device={device}...")
+        from core.vector_db import _get_search_model
+        await asyncio.to_thread(_get_search_model)
+        logger.info("SentenceTransformer ready.")
+    except Exception as e:
+        logger.warning(f"Embedding model pre-load failed (non-fatal, will load on first request): {e}")
 
 
 app = FastAPI(
