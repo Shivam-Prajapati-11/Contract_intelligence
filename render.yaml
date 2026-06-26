@@ -16,8 +16,8 @@ services:
     env: python
     plan: free
     buildCommand: |
-      pip install uv
-      uv sync --system --no-cache --no-progress
+      pip install --upgrade pip
+      pip install fastapi[standard] uvicorn pydantic-settings redis qdrant-client celery httpx requests python-multipart python-docx pymupdf pillow langdetect numpy
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
