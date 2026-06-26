@@ -39,8 +39,9 @@ services:
       # --- Qdrant (local mode on disk) ---
       - key: QDRANT_URL
         value: ""
+      # Render free tier cannot write to /var/data — use temp dir
       - key: QDRANT_LOCAL_PATH
-        value: /var/data/qdrant
+        value: /tmp/qdrant
       # --- Hardware settings ---
       - key: EMBEDDING_DEVICE
         value: cpu
