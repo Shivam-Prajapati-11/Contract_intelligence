@@ -44,7 +44,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'https://contract-intelligence-api-uuse.onrender.com' }}
+          VITE_API_BASE_URL: "https://contract-intelligence-api-uuse.onrender.com"
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
