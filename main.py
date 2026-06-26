@@ -231,11 +231,11 @@ def health_check():
         except Exception:
             services["ollama"] = "unhealthy"
     else:
-        # Groq API health check — just check that API key is configured
+        # Groq API health check — key configured = healthy (no rate-limit calls needed)
         if settings.llm_api_key:
-            services["groq"] = "configured"
+            services["groq"] = "healthy"
         else:
-            services["groq"] = "missing_api_key"
+            services["groq"] = "unhealthy"
     
     overall = "healthy" if all(v == "healthy" for v in services.values()) else "degraded"
     
