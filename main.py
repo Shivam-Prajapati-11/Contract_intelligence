@@ -1,16 +1,17 @@
 import os
 from pathlib import Path
 
-# Enable offline mode only if the embedding model is already cached to prevent startup errors on first run.
-hf_cache = Path(os.path.expanduser("~/.cache/huggingface/hub"))
-model_cached = hf_cache.exists() and any(hf_cache.glob("*all-MiniLM-L6-v2*"))
-
-if model_cached:
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    os.environ["HF_DATASETS_OFFLINE"] = "1"
-else:
-    os.environ["TRANSFORMERS_OFFLINE"] = "0"
-    os.environ["HF_DATASETS_OFFLINE"] = "0"
+# On Render, skip offline mode so the model can be downloaded
+on_render = os.environ.get("RENDER", "") == "true"
+if not on_render:
+    hf_cache = Path(os.path.expanduser("~/.cache/huggingface/hub"))
+    model_cached = hf_cache.exists() and any(hf_cache.glob("*all-MiniLM-L6-v2*"))
+    if model_cached:
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+    else:
+        os.environ["TRANSFORMERS_OFFLINE"] = "0"
+        os.environ["HF_DATASETS_OFFLINE"] = "0"
 
 import logging
 from contextlib import asynccontextmanager
