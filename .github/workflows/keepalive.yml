@@ -2,8 +2,8 @@ name: Keep Render Backend Alive
 
 on:
   schedule:
-    # Runs every 12 days at midnight UTC — prevents Render free tier suspension
-    - cron: '0 0 */12 * *'
+    # Runs every 10 minutes — keeps Render free tier from spinning down (~15 min idle limit)
+    - cron: '*/10 * * * *'
   workflow_dispatch: # Allows manual trigger too
 
 jobs:
